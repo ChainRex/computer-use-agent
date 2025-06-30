@@ -222,7 +222,8 @@ class MainWindow(QMainWindow):
                 screenshot_img = self.screenshot_manager.capture_screen()
                 if screenshot_img:
                     # 缩放图像以适应显示
-                    display_img = screenshot_img.resize((500, 300), self.screenshot_manager.capture_screen().Resampling.LANCZOS)
+                    from PIL import Image
+                    display_img = screenshot_img.resize((500, 300), Image.Resampling.LANCZOS)
                     
                     # 转换为QPixmap显示
                     import io
