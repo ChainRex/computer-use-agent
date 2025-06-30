@@ -16,12 +16,11 @@ from client.communication.server_client import ServerClient
 
 class ConnectWorker(QThread):
     """处理连接的工作线程"""
-    connection_result = pyqtSignal(bool)  # 连接结果信号
+    connection_result = pyqtSignal(bool, object)  # 连接结果信号(成功状态, ServerClient对象)
     
     def __init__(self, server_url):
         super().__init__()
         self.server_url = server_url
-        self.server_client = ServerClient(server_url)
     
     def run(self):
         """在子线程中运行连接"""
@@ -30,13 +29,20 @@ class ConnectWorker(QThread):
             loop = asyncio.new_event_loop()
             asyncio.set_event_loop(loop)
             
+            # 在工作线程中创建ServerClient
+            server_client = ServerClient(self.server_url)
+            
             # 运行连接
-            success = loop.run_until_complete(self.server_client.connect())
-            self.connection_result.emit(success)
+            success = loop.run_until_complete(server_client.connect())
+            
+            if success:
+                self.connection_result.emit(True, server_client)
+            else:
+                self.connection_result.emit(False, None)
                 
         except Exception as e:
             print(f"连接错误: {e}")
-            self.connection_result.emit(False)
+            self.connection_result.emit(False, None)
         finally:
             loop.close()
 
@@ -70,9 +76,9 @@ class TaskWorker(QThread):
     task_completed = pyqtSignal(object)  # 任务完成信号
     task_failed = pyqtSignal(str)        # 任务失败信号
     
-    def __init__(self, server_client, text_command, screenshot_base64):
+    def __init__(self, server_url, text_command, screenshot_base64):
         super().__init__()
-        self.server_client = server_client
+        self.server_url = server_url
         self.text_command = text_command
         self.screenshot_base64 = screenshot_base64
     
@@ -83,13 +89,25 @@ class TaskWorker(QThread):
             loop = asyncio.new_event_loop()
             asyncio.set_event_loop(loop)
             
+            # 在工作线程中创建新的ServerClient
+            server_client = ServerClient(self.server_url)
+            
+            # 连接并发送任务
+            connected = loop.run_until_complete(server_client.connect())
+            if not connected:
+                self.task_failed.emit("无法连接到服务端")
+                return
+            
             # 运行异步任务
             result = loop.run_until_complete(
-                self.server_client.send_task_for_analysis(
+                server_client.send_task_for_analysis(
                     self.text_command, 
                     self.screenshot_base64
                 )
             )
+            
+            # 断开连接
+            loop.run_until_complete(server_client.disconnect())
             
             if result:
                 self.task_completed.emit(result)
@@ -189,7 +207,7 @@ class MainWindow(QMainWindow):
         
         self.send_task_btn = QPushButton("发送任务")
         self.send_task_btn.clicked.connect(self.send_task)
-        self.send_task_btn.setEnabled(False)
+        self.send_task_btn.setEnabled(True)  # 现在任务工作线程会自己连接
         
         button_layout.addWidget(self.screenshot_btn)
         button_layout.addWidget(self.send_task_btn)
@@ -242,12 +260,11 @@ class MainWindow(QMainWindow):
         self.connect_worker.connection_result.connect(self.on_connection_result)
         self.connect_worker.start()
     
-    def on_connection_result(self, success):
+    def on_connection_result(self, success, server_client):
         """连接结果回调"""
         if success:
-            self.server_client = self.connect_worker.server_client
+            self.server_client = server_client
             self.connect_btn.setText("断开连接")
-            self.send_task_btn.setEnabled(True)
             self.status_label.setText("已连接到服务端")
             self.result_display.append("✅ 成功连接到服务端")
         else:
@@ -270,7 +287,6 @@ class MainWindow(QMainWindow):
         """断开连接结果回调"""
         self.server_client = None
         self.connect_btn.setText("连接服务端")
-        self.send_task_btn.setEnabled(False)
         self.status_label.setText("已断开连接")
         self.result_display.append("🔌 已断开服务端连接")
         self.connect_btn.setEnabled(True)
@@ -328,8 +344,11 @@ class MainWindow(QMainWindow):
             self.result_display.append("❌ 请先截图")
             return
         
-        if not self.server_client or not self.server_client.connected:
-            self.result_display.append("❌ 请先连接服务端")
+        # TaskWorker现在会自己建立连接，无需预先连接
+        # 但我们仍然需要有效的服务端地址
+        server_url = self.server_url_input.text().strip()
+        if not server_url:
+            self.result_display.append("❌ 请输入服务端地址")
             return
         
         # 显示发送状态
@@ -339,7 +358,7 @@ class MainWindow(QMainWindow):
         
         # 创建工作线程处理任务
         self.task_worker = TaskWorker(
-            self.server_client, 
+            self.server_url_input.text(),
             command, 
             self.current_screenshot_base64
         )
