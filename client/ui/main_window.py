@@ -6,7 +6,6 @@ from PyQt6.QtWidgets import (QApplication, QMainWindow, QVBoxLayout, QHBoxLayout
                             QTextBrowser, QSplitter, QFrame)
 from PyQt6.QtCore import Qt, QThread, pyqtSignal, QTimer
 from PyQt6.QtGui import QFont, QPixmap
-import qasync
 
 # 添加项目根目录到Python路径
 project_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -14,6 +13,57 @@ sys.path.append(project_root)
 
 from client.screenshot.screenshot_manager import ScreenshotManager
 from client.communication.server_client import ServerClient
+
+class ConnectWorker(QThread):
+    """处理连接的工作线程"""
+    connection_result = pyqtSignal(bool)  # 连接结果信号
+    
+    def __init__(self, server_url):
+        super().__init__()
+        self.server_url = server_url
+        self.server_client = ServerClient(server_url)
+    
+    def run(self):
+        """在子线程中运行连接"""
+        try:
+            # 创建新的事件循环
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+            
+            # 运行连接
+            success = loop.run_until_complete(self.server_client.connect())
+            self.connection_result.emit(success)
+                
+        except Exception as e:
+            print(f"连接错误: {e}")
+            self.connection_result.emit(False)
+        finally:
+            loop.close()
+
+class DisconnectWorker(QThread):
+    """处理断开连接的工作线程"""
+    disconnection_result = pyqtSignal(bool)  # 断开结果信号
+    
+    def __init__(self, server_client):
+        super().__init__()
+        self.server_client = server_client
+    
+    def run(self):
+        """在子线程中运行断开连接"""
+        try:
+            # 创建新的事件循环
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+            
+            # 运行断开连接
+            loop.run_until_complete(self.server_client.disconnect())
+            self.disconnection_result.emit(True)
+                
+        except Exception as e:
+            print(f"断开连接错误: {e}")
+            self.disconnection_result.emit(False)
+        finally:
+            loop.close()
 
 class TaskWorker(QThread):
     """处理异步任务的工作线程"""
@@ -59,7 +109,7 @@ class MainWindow(QMainWindow):
         
         # 初始化组件
         self.screenshot_manager = ScreenshotManager()
-        self.server_client = ServerClient()
+        self.server_client = None  # 在连接时创建
         self.current_screenshot_base64 = None
         
         # 设置UI
@@ -175,7 +225,7 @@ class MainWindow(QMainWindow):
     
     def toggle_connection(self):
         """切换服务端连接状态"""
-        if not self.server_client.connected:
+        if self.server_client is None or not self.server_client.connected:
             # 尝试连接
             self.connect_to_server()
         else:
@@ -184,32 +234,46 @@ class MainWindow(QMainWindow):
     
     def connect_to_server(self):
         """连接到服务端"""
-        async def _connect():
-            self.server_client.server_url = self.server_url_input.text()
-            success = await self.server_client.connect()
-            
-            if success:
-                self.connect_btn.setText("断开连接")
-                self.send_task_btn.setEnabled(True)
-                self.status_label.setText("已连接到服务端")
-                self.result_display.append("✅ 成功连接到服务端")
-            else:
-                self.status_label.setText("连接失败")
-                self.result_display.append("❌ 连接服务端失败")
+        self.connect_btn.setEnabled(False)
+        self.status_label.setText("连接中...")
         
-        # 在新线程中运行异步连接
-        asyncio.create_task(_connect())
+        # 创建连接工作线程
+        self.connect_worker = ConnectWorker(self.server_url_input.text())
+        self.connect_worker.connection_result.connect(self.on_connection_result)
+        self.connect_worker.start()
+    
+    def on_connection_result(self, success):
+        """连接结果回调"""
+        if success:
+            self.server_client = self.connect_worker.server_client
+            self.connect_btn.setText("断开连接")
+            self.send_task_btn.setEnabled(True)
+            self.status_label.setText("已连接到服务端")
+            self.result_display.append("✅ 成功连接到服务端")
+        else:
+            self.status_label.setText("连接失败")
+            self.result_display.append("❌ 连接服务端失败")
+        
+        self.connect_btn.setEnabled(True)
     
     def disconnect_from_server(self):
         """断开服务端连接"""
-        async def _disconnect():
-            await self.server_client.disconnect()
-            self.connect_btn.setText("连接服务端")
-            self.send_task_btn.setEnabled(False)
-            self.status_label.setText("已断开连接")
-            self.result_display.append("🔌 已断开服务端连接")
+        self.connect_btn.setEnabled(False)
+        self.status_label.setText("断开连接中...")
         
-        asyncio.create_task(_disconnect())
+        # 创建断开连接工作线程
+        self.disconnect_worker = DisconnectWorker(self.server_client)
+        self.disconnect_worker.disconnection_result.connect(self.on_disconnection_result)
+        self.disconnect_worker.start()
+    
+    def on_disconnection_result(self, success):
+        """断开连接结果回调"""
+        self.server_client = None
+        self.connect_btn.setText("连接服务端")
+        self.send_task_btn.setEnabled(False)
+        self.status_label.setText("已断开连接")
+        self.result_display.append("🔌 已断开服务端连接")
+        self.connect_btn.setEnabled(True)
     
     def capture_screenshot(self):
         """捕获屏幕截图"""
@@ -227,8 +291,6 @@ class MainWindow(QMainWindow):
                     
                     # 转换为QPixmap显示
                     import io
-                    import base64
-                    from PIL import Image
                     
                     buffer = io.BytesIO()
                     display_img.save(buffer, format='PNG')
@@ -266,7 +328,7 @@ class MainWindow(QMainWindow):
             self.result_display.append("❌ 请先截图")
             return
         
-        if not self.server_client.connected:
+        if not self.server_client or not self.server_client.connected:
             self.result_display.append("❌ 请先连接服务端")
             return
         
@@ -317,15 +379,11 @@ class MainWindow(QMainWindow):
 def main():
     app = QApplication(sys.argv)
     
-    # 使用qasync支持异步操作
-    loop = qasync.QEventLoop(app)
-    asyncio.set_event_loop(loop)
-    
     window = MainWindow()
     window.show()
     
-    with loop:
-        loop.run_forever()
+    # 使用标准的Qt事件循环
+    sys.exit(app.exec())
 
 if __name__ == "__main__":
     main()
