@@ -2,81 +2,120 @@
 
 基于AI的计算机自动化操作系统，支持语音指令和屏幕操作。
 
-## 项目结构
+> **🎉 MVP版本已完成！** 完整的客户端-服务端架构，支持跨平台部署。
 
-```
-computer-use-agent/
-├── client/                 # 客户端代码
-│   ├── ui/                # PyQt界面
-│   ├── screenshot/        # 屏幕截图
-│   ├── communication/     # 服务端通信
-│   └── main.py           # 客户端入口
-├── server/                # 服务端代码
-│   ├── api/              # FastAPI接口
-│   └── main.py          # 服务端入口
-├── shared/               # 共享代码
-│   └── schemas/         # 数据模型
-└── requirements.txt     # 依赖列表
-```
+## 🚀 快速开始
 
-## 快速开始
-
-### 1. 安装依赖
+### 🖥️ 服务端部署（Linux）
 
 ```bash
-pip install -r requirements.txt
-```
+# 克隆仓库
+git clone git@github.com:ChainRex/computer-use-agent.git
+cd computer-use-agent
 
-### 2. 启动服务端
+# 安装依赖
+pip install fastapi uvicorn websockets pydantic
 
-```bash
+# 启动服务端
 python start_server.py
 ```
 
-服务端将在 `http://localhost:8000` 启动
+服务端地址: `ws://your-server-ip:8000/ws`
 
-### 3. 启动客户端
+### 🍎 客户端部署（Mac）
 
 ```bash
+# 克隆仓库
+git clone git@github.com:ChainRex/computer-use-agent.git
+cd computer-use-agent
+
+# 安装依赖
+pip install PyQt6 pillow pyautogui websockets qasync pydantic
+
+# 启动客户端
 python start_client.py
 ```
 
-## 使用说明
+## 📱 使用说明
 
-1. 启动服务端和客户端
-2. 在客户端界面点击"连接服务端"
-3. 在指令输入框输入指令，例如：
-   - "帮我打开计算器"
-   - "计算1+2等于几"
-   - "打开记事本"
-4. 点击"发送任务"，查看AI分析结果
+1. **启动服务端**（Linux云服务器）
+2. **启动客户端**（Mac本地）
+3. 在客户端中修改服务端地址为你的服务器IP
+4. 点击"连接服务端"
+5. 输入指令并发送任务
 
-## 当前功能
+### 🎯 支持的指令
 
-✅ **已实现**：
-- PyQt客户端界面
-- 屏幕截图功能
-- WebSocket通信
-- 基础指令识别（计算器、记事本）
-- 模拟AI任务分析
+- `"帮我打开计算器"` → 生成打开计算器的操作步骤
+- `"计算1+2等于几"` → 生成完整的计算序列
+- `"打开记事本"` → 生成打开记事本的快捷键序列
 
-🚧 **开发中**：
-- 语音识别和合成
-- OmniParser屏幕元素识别
-- Claude API集成
-- 自动化执行引擎
+## 🏗️ 项目架构
 
-## 测试指令
+```
+┌─────────────────────────────────┐    WebSocket    ┌─────────────────┐
+│         Mac客户端               │ ←─────────────→ │   Linux服务端   │
+│                                 │                  │                 │
+│ • PyQt6界面                     │                  │ • FastAPI       │
+│ • 屏幕截图                      │                  │ • 任务分析      │
+│ • 指令输入                      │                  │ • 动作规划      │
+│ • 执行引擎（待开发）            │                  │ • AI推理        │
+└─────────────────────────────────┘                  └─────────────────┘
+```
 
-试试这些指令：
-- "帮我打开计算器"
-- "计算1+2等于几"
-- "打开记事本"
+## 📋 开发状态
 
-## 开发说明
+### ✅ 已完成
+- [x] PyQt6客户端界面（文本输入、截图预览、状态显示）
+- [x] FastAPI服务端（WebSocket API、任务分析）
+- [x] 实时通信协议（标准化消息格式）
+- [x] 基础指令识别（计算器、记事本、数学计算）
+- [x] 跨平台部署（Mac客户端 + Linux服务端）
 
-这是MVP版本，当前使用模拟的AI分析。后续将集成：
-- OpenAI Whisper (语音识别)
-- OmniParser (屏幕解析)
-- Claude API (智能分析)
-- PyAutoGUI (自动化执行)
+### 🚧 开发中
+- [ ] **OmniParser集成** - 真实的屏幕元素识别
+- [ ] **Claude API集成** - 智能任务分析
+- [ ] **PyAutoGUI执行引擎** - 实际的屏幕操作
+- [ ] **语音处理** - Whisper + TTS
+
+### 📅 计划中
+- [ ] 语音录制和播放
+- [ ] 结果验证机制
+- [ ] 更多应用支持（浏览器、文件管理器）
+- [ ] 安全权限控制
+
+## 🔧 开发环境
+
+### 服务端要求
+- Python 3.8+
+- FastAPI, Uvicorn
+- Linux系统（推荐Ubuntu）
+
+### 客户端要求  
+- Python 3.8+
+- PyQt6, Pillow, PyAutoGUI
+- macOS或Windows（图形界面）
+
+## 📖 API文档
+
+启动服务端后访问：
+- **API文档**: `http://your-server:8000/docs`
+- **健康检查**: `http://your-server:8000/health`
+- **WebSocket**: `ws://your-server:8000/ws`
+
+## 🤝 贡献
+
+这是一个快速迭代的MVP项目，欢迎贡献：
+
+1. Fork 项目
+2. 创建功能分支
+3. 提交更改
+4. 发起 Pull Request
+
+## 📄 许可证
+
+MIT License
+
+---
+
+**🌟 Star this repo if you find it useful!**
