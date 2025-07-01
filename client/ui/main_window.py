@@ -180,7 +180,14 @@ class TaskWorker(QThread):
         
         try:
             # 连接WebSocket
-            async with websockets.connect(self.server_url, max_size=10*1024*1024) as websocket:
+            # 设置更长的ping间隔和超时时间来避免keepalive超时
+            async with websockets.connect(
+                self.server_url, 
+                max_size=10*1024*1024,
+                ping_interval=20,  # 20秒ping间隔
+                ping_timeout=10,   # 10秒ping超时
+                close_timeout=10   # 10秒关闭超时
+            ) as websocket:
                 # 构建任务请求
                 task_id = str(uuid.uuid4())
                 request = {
@@ -822,30 +829,44 @@ class MainWindow(QMainWindow):
             
             # 填充表格数据
             for row, elem in enumerate(ui_elements):
+                # 处理字典格式和对象格式
+                if isinstance(elem, dict):
+                    elem_id = elem.get('id', row)
+                    elem_type = elem.get('type', '未知')
+                    elem_description = elem.get('description', '无描述')
+                    elem_coordinates = elem.get('coordinates', [])
+                    elem_text = elem.get('text', '')
+                else:
+                    # UIElement对象
+                    elem_id = elem.id
+                    elem_type = elem.type
+                    elem_description = elem.description
+                    elem_coordinates = elem.coordinates
+                    elem_text = elem.text
+                
                 # ID
-                self.elements_table.setItem(row, 0, QTableWidgetItem(str(elem.id)))
+                self.elements_table.setItem(row, 0, QTableWidgetItem(str(elem_id)))
                 
                 # 类型
-                elem_type = elem.type
                 self.elements_table.setItem(row, 1, QTableWidgetItem(elem_type))
                 element_types[elem_type] = element_types.get(elem_type, 0) + 1
                 
                 # 描述
-                description = elem.description[:100] + "..." if len(elem.description) > 100 else elem.description
+                description = elem_description[:100] + "..." if len(elem_description) > 100 else elem_description
                 self.elements_table.setItem(row, 2, QTableWidgetItem(description))
                 
                 # 坐标
-                if elem.coordinates and len(elem.coordinates) >= 2:
-                    if len(elem.coordinates) == 4:
-                        coords_str = f"({elem.coordinates[0]:.0f},{elem.coordinates[1]:.0f}) - ({elem.coordinates[2]:.0f},{elem.coordinates[3]:.0f})"
+                if elem_coordinates and len(elem_coordinates) >= 2:
+                    if len(elem_coordinates) == 4:
+                        coords_str = f"({elem_coordinates[0]:.0f},{elem_coordinates[1]:.0f}) - ({elem_coordinates[2]:.0f},{elem_coordinates[3]:.0f})"
                     else:
-                        coords_str = f"({elem.coordinates[0]:.0f},{elem.coordinates[1]:.0f})"
+                        coords_str = f"({elem_coordinates[0]:.0f},{elem_coordinates[1]:.0f})"
                 else:
                     coords_str = "未知"
                 self.elements_table.setItem(row, 3, QTableWidgetItem(coords_str))
                 
                 # 文本
-                text = elem.text[:50] + "..." if len(elem.text) > 50 else elem.text
+                text = elem_text[:50] + "..." if len(elem_text) > 50 else elem_text
                 self.elements_table.setItem(row, 4, QTableWidgetItem(text))
                 
             

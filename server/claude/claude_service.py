@@ -207,9 +207,14 @@ class ClaudeService:
             )
             
             if result.returncode == 0:
-                logger.debug("Claude command executed successfully")
                 response = result.stdout.strip()
-                logger.debug(f"Claude raw response: {response[:500]}...")  # 打印前500字符用于调试
+                logger.debug(f"Claude raw response length: {len(response)}")
+                logger.debug(f"Claude raw response preview: {response[:200]}...")  # 打印前200字符用于调试
+                
+                if not response:
+                    logger.warning("Claude returned empty response")
+                    raise RuntimeError("Claude returned empty response")
+                
                 return response
             else:
                 error_msg = f"Claude command failed with return code {result.returncode}: {result.stderr}"
