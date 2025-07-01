@@ -142,8 +142,7 @@ class ClaudeService:
         {{
             "type": "click",
             "description": "点击描述",
-            "coordinates": [x, y],
-            "element_id": "元素ID（如果适用）"
+            "element_id": "UI元素的ID（必须使用上面检测到的元素ID）"
         }},
         {{
             "type": "type",
@@ -164,16 +163,18 @@ class ClaudeService:
 }}
 
 操作类型说明:
-- click: 点击操作，需要提供coordinates [x, y]
+- click: 点击操作，必须提供element_id（引用检测到的UI元素ID），不要提供coordinates
 - type: 文本输入操作，需要提供text
 - key: 按键操作，需要提供按键组合text
 - wait: 等待操作，需要提供duration（秒）
 
-请确保:
-1. 操作步骤逻辑正确且可执行
-2. 点击坐标基于检测到的UI元素
-3. 考虑操作之间的时序关系
-4. 提供清晰的操作描述"""
+重要要求:
+1. 对于点击操作，必须使用element_id引用上面列出的UI元素，不要直接提供坐标
+2. 仔细分析用户指令，选择最合适的UI元素ID
+3. 操作步骤逻辑正确且可执行
+4. 考虑操作之间的时序关系
+5. 提供清晰的操作描述
+6. 如果没有合适的UI元素可以点击，请在reasoning中说明原因"""
 
         return prompt
     
