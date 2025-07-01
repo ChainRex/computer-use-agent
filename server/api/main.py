@@ -257,20 +257,22 @@ async def handle_task_completion_verification(message: dict, websocket: WebSocke
         task_id = message["task_id"]
         original_command = verification_data["original_command"]
         previous_claude_output = verification_data["previous_claude_output"]
-        verification_screenshot_path = verification_data["verification_screenshot_path"]
+        screenshot_base64 = verification_data.get("screenshot_base64")
+        verification_prompt = verification_data.get("verification_prompt")
         
         print(f"处理任务完成度验证: {task_id}")
         print(f"原始指令: {original_command}")
-        print(f"验证截图: {verification_screenshot_path}")
+        print(f"使用内存截图数据进行验证")
         
         # 使用Claude进行任务完成度验证
         if claude_service:
             try:
                 print("🔍 使用Claude验证任务完成度...")
-                status, reasoning, confidence = claude_service.verify_task_completion(
+                status, reasoning, confidence = claude_service.verify_task_completion_with_base64(
                     original_command,
                     previous_claude_output,
-                    verification_screenshot_path
+                    screenshot_base64,
+                    verification_prompt
                 )
                 
                 print(f"✅ 任务完成度验证结果: {status} (置信度: {confidence:.2f})")

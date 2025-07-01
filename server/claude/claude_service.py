@@ -117,6 +117,60 @@ class ClaudeService:
             logger.error(f"Claude task completion verification failed: {str(e)}")
             raise
     
+    def verify_task_completion_with_base64(
+        self, 
+        original_command: str, 
+        previous_claude_output: str,
+        screenshot_base64: str,
+        verification_prompt: str = None
+    ) -> Tuple[str, str, float]:
+        """
+        使用Claude验证任务完成度（使用base64截图数据）
+        
+        Args:
+            original_command: 原始用户指令
+            previous_claude_output: 上一轮Claude输出
+            screenshot_base64: 截图的base64数据
+            verification_prompt: 可选的自定义验证提示词
+            
+        Returns:
+            Tuple[str, str, float]: (状态, 推理过程, 置信度)
+        """
+        try:
+            # 如果没有提供自定义提示词，使用默认的构建方法
+            if not verification_prompt:
+                verification_prompt = self._build_completion_verification_prompt(
+                    original_command, 
+                    previous_claude_output
+                )
+            
+            # 将base64数据保存为临时文件用于Claude分析
+            timestamp = int(time.time())
+            temp_filename = f"verification_temp_{timestamp}.png"
+            temp_filepath = self._save_image_from_base64(screenshot_base64, temp_filename)
+            
+            try:
+                # 执行Claude命令（带重试机制）
+                claude_response = self._execute_claude_command_with_retry(verification_prompt, temp_filepath)
+                
+                # 解析Claude响应
+                status, reasoning, confidence = self._parse_completion_response(claude_response)
+                
+                return status, reasoning, confidence
+                
+            finally:
+                # 清理临时文件
+                try:
+                    if os.path.exists(temp_filepath):
+                        os.remove(temp_filepath)
+                        logger.debug(f"Cleaned up temp file: {temp_filepath}")
+                except Exception as cleanup_error:
+                    logger.warning(f"Failed to cleanup temp file {temp_filepath}: {cleanup_error}")
+            
+        except Exception as e:
+            logger.error(f"Claude task completion verification with base64 failed: {str(e)}")
+            raise
+    
     def _save_image_from_base64(self, image_base64: str, filename: str) -> str:
         """
         将base64图像保存为文件

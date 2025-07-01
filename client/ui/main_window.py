@@ -247,13 +247,14 @@ class TaskCompletionVerificationWorker(QThread):
     verification_completed = pyqtSignal(object)  # 验证完成信号
     verification_failed = pyqtSignal(str)        # 验证失败信号
     
-    def __init__(self, server_url, task_id, original_command, previous_claude_output, verification_screenshot_path):
+    def __init__(self, server_url, task_id, original_command, previous_claude_output, screenshot_base64, verification_prompt):
         super().__init__()
         self.server_url = server_url
         self.task_id = task_id
         self.original_command = original_command
         self.previous_claude_output = previous_claude_output
-        self.verification_screenshot_path = verification_screenshot_path
+        self.screenshot_base64 = screenshot_base64
+        self.verification_prompt = verification_prompt
     
     def run(self):
         """在子线程中运行任务完成度验证"""
@@ -295,7 +296,8 @@ class TaskCompletionVerificationWorker(QThread):
                     "data": {
                         "original_command": self.original_command,
                         "previous_claude_output": self.previous_claude_output,
-                        "verification_screenshot_path": self.verification_screenshot_path
+                        "screenshot_base64": self.screenshot_base64,
+                        "verification_prompt": self.verification_prompt
                     }
                 }
                 
@@ -1104,14 +1106,15 @@ class MainWindow(QMainWindow):
                 previous_claude_output
             )
             
-            if check_result.screenshot_path:
+            if check_result.screenshot_base64 and check_result.verification_prompt:
                 # 启动任务完成度验证工作线程
                 self.verification_worker = TaskCompletionVerificationWorker(
                     self.server_url_input.text(),
                     task_id,
                     original_command,
                     previous_claude_output,
-                    check_result.screenshot_path
+                    check_result.screenshot_base64,
+                    check_result.verification_prompt
                 )
                 
                 self.verification_worker.verification_completed.connect(self._on_verification_completed)
@@ -1121,7 +1124,7 @@ class MainWindow(QMainWindow):
                 self.claude_display.append(f"\n🔍 <b>正在验证任务完成度...</b>")
                 self.status_label.setText("验证任务完成度...")
             else:
-                self.claude_display.append(f"\n❌ <b>任务完成度验证失败：无法保存验证截图</b>")
+                self.claude_display.append(f"\n❌ <b>任务完成度验证失败：无法获取截图数据</b>")
         
         except Exception as e:
             self.claude_display.append(f"\n❌ <b>启动任务完成度验证失败: {str(e)}</b>")
