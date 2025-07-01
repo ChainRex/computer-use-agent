@@ -154,6 +154,16 @@ class ScreenshotManager:
         # 压缩图片以减少传输大小
         compressed = screenshot.resize((1280, 720), Image.Resampling.LANCZOS)
         
+        # 如果图像有透明通道，转换为RGB模式
+        if compressed.mode in ('RGBA', 'LA', 'P'):
+            # 创建白色背景
+            rgb_image = Image.new('RGB', compressed.size, (255, 255, 255))
+            if compressed.mode == 'P':
+                compressed = compressed.convert('RGBA')
+            # 将原图像粘贴到白色背景上
+            rgb_image.paste(compressed, mask=compressed.split()[-1] if compressed.mode == 'RGBA' else None)
+            compressed = rgb_image
+        
         # 转换为base64
         buffer = io.BytesIO()
         compressed.save(buffer, format='JPEG', quality=85, optimize=True)  # 使用JPEG减少大小
