@@ -1146,9 +1146,28 @@ class MainWindow(QMainWindow):
                 self.status_label.setText("任务完成")
             elif status == "incomplete":
                 next_steps = data.get('next_steps')
+                next_actions = data.get('next_actions')
+                
                 if next_steps:
                     self.claude_display.append(f"\n🔄 <b>任务未完成，建议下一步:</b> {next_steps}")
-                    # 这里可以添加继续执行的逻辑
+                
+                if next_actions and len(next_actions) > 0:
+                    self.claude_display.append(f"\n⚡ <b>下一步操作指令:</b>")
+                    for i, action in enumerate(next_actions, 1):
+                        action_type = action.get('type', 'unknown')
+                        action_desc = action.get('description', '无描述')
+                        action_text = action.get('text', '')
+                        
+                        action_line = f"  {i}. <b>{action_type.upper()}</b>: {action_desc}"
+                        if action_text:
+                            action_line += f" ('{action_text}')"
+                        
+                        self.claude_display.append(action_line)
+                    
+                    # 继续执行新的操作指令
+                    self._continue_task_execution_with_actions(next_actions)
+                elif next_steps:
+                    # 如果只有文字建议，使用旧的继续执行逻辑
                     self._continue_task_execution(next_steps)
                 else:
                     self.claude_display.append(f"\n🔄 <b>任务未完成，但未提供下一步建议</b>")
@@ -1180,6 +1199,42 @@ class MainWindow(QMainWindow):
             
         except Exception as e:
             self.claude_display.append(f"\n❌ <b>继续执行任务失败: {str(e)}</b>")
+    
+    def _continue_task_execution_with_actions(self, next_actions):
+        """使用具体的操作指令继续执行任务"""
+        try:
+            from shared.schemas.data_models import ActionPlan
+            
+            # 转换字典格式的操作为ActionPlan对象
+            action_plans = []
+            for action_data in next_actions:
+                action = ActionPlan(
+                    type=action_data.get('type', ''),
+                    description=action_data.get('description', ''),
+                    element_id=action_data.get('element_id'),
+                    coordinates=action_data.get('coordinates'),
+                    text=action_data.get('text'),
+                    duration=action_data.get('duration'),
+                    keys=action_data.get('keys')
+                )
+                action_plans.append(action)
+            
+            self.claude_display.append(f"\n🔄 <b>开始执行{len(action_plans)}个后续操作...</b>")
+            
+            # 直接执行操作指令，不需要重新分析
+            original_command = self.command_input.toPlainText()
+            self.execution_manager.execute_action_plan(
+                action_plans, 
+                [], # UI元素列表（可以为空，因为操作指令已经包含必要信息）
+                f"continuation_{int(time.time())}", 
+                original_command,
+                "继续执行验证后的操作指令"
+            )
+            
+        except Exception as e:
+            self.claude_display.append(f"\n❌ <b>继续执行操作指令失败: {str(e)}</b>")
+            import traceback
+            print(f"Error in _continue_task_execution_with_actions: {traceback.format_exc()}")
     
     
     def _on_execution_started(self, task_id):
