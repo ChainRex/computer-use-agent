@@ -1,14 +1,10 @@
 import base64
 import io
-import threading
-import queue
-import gc
 from concurrent.futures import ThreadPoolExecutor
 from PIL import Image, ImageGrab
-from typing import Optional, Dict, Tuple
+from typing import Optional
 import time
 import os
-import weakref
 
 class ScreenshotManager:
     def __init__(self):
@@ -18,81 +14,11 @@ class ScreenshotManager:
         # 线程池用于异步截图操作
         self.thread_pool = ThreadPoolExecutor(max_workers=2, thread_name_prefix="screenshot")
         
-        # 缓存机制
-        self._cache_lock = threading.Lock()
-        self._image_cache: Dict[str, Tuple[Image.Image, float]] = {}  # key: (image, timestamp)
-        self._base64_cache: Dict[str, Tuple[str, float]] = {}  # key: (base64_str, timestamp)
-        self.cache_ttl = 2.0  # 缓存过期时间2秒
-        self.max_cache_size = 5  # 最大缓存数量
-        
-        # 性能统计
-        self.stats = {
-            'total_screenshots': 0,
-            'cache_hits': 0,
-            'avg_capture_time': 0.0
-        }
-        
-        # 启动缓存清理线程
-        self._start_cache_cleaner()
-        
-    def _start_cache_cleaner(self):
-        """启动缓存清理线程"""
-        def cache_cleaner():
-            while True:
-                time.sleep(30)  # 每30秒清理一次过期缓存
-                self._clean_expired_cache()
-        
-        cleaner_thread = threading.Thread(target=cache_cleaner, daemon=True, name="cache_cleaner")
-        cleaner_thread.start()
-    
-    def _clean_expired_cache(self):
-        """清理过期缓存"""
-        current_time = time.time()
-        with self._cache_lock:
-            # 清理过期的图像缓存
-            expired_keys = [k for k, (_, timestamp) in self._image_cache.items() 
-                           if current_time - timestamp > self.cache_ttl]
-            for key in expired_keys:
-                image, _ = self._image_cache.pop(key)
-                del image  # 显式释放图像对象
-            
-            # 清理过期的base64缓存
-            expired_keys = [k for k, (_, timestamp) in self._base64_cache.items() 
-                           if current_time - timestamp > self.cache_ttl]
-            for key in expired_keys:
-                self._base64_cache.pop(key)
-            
-            # 限制缓存大小
-            if len(self._image_cache) > self.max_cache_size:
-                oldest_keys = sorted(self._image_cache.keys(), 
-                                   key=lambda k: self._image_cache[k][1])[:len(self._image_cache) - self.max_cache_size]
-                for key in oldest_keys:
-                    image, _ = self._image_cache.pop(key)
-                    del image
-            
-            if len(self._base64_cache) > self.max_cache_size:
-                oldest_keys = sorted(self._base64_cache.keys(), 
-                                   key=lambda k: self._base64_cache[k][1])[:len(self._base64_cache) - self.max_cache_size]
-                for key in oldest_keys:
-                    self._base64_cache.pop(key)
-        
-        # 触发垃圾回收
-        gc.collect()
     
     def _capture_screen_sync(self) -> Optional[Image.Image]:
         """同步捕获屏幕（内部方法）"""
         try:
-            start_time = time.time()
             screenshot = ImageGrab.grab()
-            capture_time = time.time() - start_time
-            
-            # 更新性能统计
-            self.stats['total_screenshots'] += 1
-            self.stats['avg_capture_time'] = (
-                (self.stats['avg_capture_time'] * (self.stats['total_screenshots'] - 1) + capture_time) 
-                / self.stats['total_screenshots']
-            )
-            
             self.last_screenshot_time = time.time()
             return screenshot
         except Exception as e:
@@ -113,37 +39,14 @@ class ScreenshotManager:
         
         return self.thread_pool.submit(capture_and_callback)
     
-    def _generate_cache_key(self) -> str:
-        """生成缓存键（基于时间戳和屏幕尺寸）"""
-        screen_size = self.get_screen_size()
-        # 使用秒级时间戳作为缓存键，同一秒内的截图可以复用
-        timestamp_key = int(time.time())
-        return f"{screen_size[0]}x{screen_size[1]}_{timestamp_key}"
-    
     def capture_screen_to_base64(self) -> Optional[str]:
-        """捕获屏幕并转换为base64字符串（带缓存）"""
-        # 检查缓存
-        cache_key = self._generate_cache_key()
-        with self._cache_lock:
-            if cache_key in self._base64_cache:
-                base64_str, timestamp = self._base64_cache[cache_key]
-                if time.time() - timestamp < self.cache_ttl:
-                    self.stats['cache_hits'] += 1
-                    return base64_str
-        
-        # 缓存未命中，重新截图
+        """捕获屏幕并转换为base64字符串"""
         screenshot = self._capture_screen_sync()
         if screenshot is None:
             return None
         
         try:
-            # 异步处理图像压缩和编码
             base64_str = self._process_image_to_base64(screenshot)
-            
-            # 更新缓存
-            with self._cache_lock:
-                self._base64_cache[cache_key] = (base64_str, time.time())
-            
             return base64_str
         except Exception as e:
             print(f"图片转换失败: {e}")
@@ -217,31 +120,8 @@ class ScreenshotManager:
         except:
             return (1920, 1080)  # 默认分辨率
     
-    def get_performance_stats(self) -> Dict:
-        """获取性能统计信息"""
-        with self._cache_lock:
-            cache_info = {
-                'image_cache_size': len(self._image_cache),
-                'base64_cache_size': len(self._base64_cache),
-                'cache_hit_rate': (self.stats['cache_hits'] / max(1, self.stats['total_screenshots'])) * 100
-            }
-        
-        return {**self.stats, **cache_info}
-    
-    def clear_cache(self):
-        """手动清理所有缓存"""
-        with self._cache_lock:
-            # 释放图像对象
-            for image, _ in self._image_cache.values():
-                del image
-            self._image_cache.clear()
-            self._base64_cache.clear()
-        gc.collect()
-        print("缓存已清理")
-    
     def shutdown(self):
         """关闭截图管理器，清理资源"""
-        self.clear_cache()
         self.thread_pool.shutdown(wait=True)
         print("ScreenshotManager已关闭")
 

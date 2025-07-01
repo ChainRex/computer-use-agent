@@ -66,28 +66,6 @@ class ScreenshotWorker(QThread):
             # 等待下次截图
             self.msleep(int(self.interval * 1000))
 
-class PerformanceMonitorWorker(QThread):
-    """性能监控线程"""
-    performance_update = pyqtSignal(dict)  # 性能数据
-    
-    def __init__(self, screenshot_manager):
-        super().__init__()
-        self.screenshot_manager = screenshot_manager
-        self.should_run = True
-        
-    def stop(self):
-        self.should_run = False
-        
-    def run(self):
-        """性能监控主循环"""
-        while self.should_run:
-            try:
-                stats = self.screenshot_manager.get_performance_stats()
-                self.performance_update.emit(stats)
-            except Exception as e:
-                print(f"性能监控错误: {e}")
-            
-            self.msleep(10000)  # 每10秒更新一次性能统计
 
 class ConnectWorker(QThread):
     """处理连接的工作线程"""
@@ -302,10 +280,6 @@ class MainWindow(QMainWindow):
         self.screenshot_worker.screenshot_failed.connect(self.on_screenshot_failed)
         self.screenshot_worker.start()
         
-        # 启动性能监控线程
-        self.performance_worker = PerformanceMonitorWorker(self.screenshot_manager)
-        self.performance_worker.performance_update.connect(self.on_performance_update)
-        self.performance_worker.start()
         
         # 用于缓存待更新的截图数据
         self.pending_screenshot_update = None
@@ -348,10 +322,8 @@ class MainWindow(QMainWindow):
         # 状态栏
         status_layout = QHBoxLayout()
         self.status_label = QLabel("就绪")
-        self.performance_label = QLabel("性能统计: 等待数据...")
         status_layout.addWidget(self.status_label)
         status_layout.addStretch()
-        status_layout.addWidget(self.performance_label)
         
         status_widget = QWidget()
         status_widget.setLayout(status_layout)
@@ -389,54 +361,17 @@ class MainWindow(QMainWindow):
         self.send_task_btn.clicked.connect(self.send_task)
         self.send_task_btn.setEnabled(True)  # 现在任务工作线程会自己连接
         
-        # 性能控制按钮
-        self.performance_btn = QPushButton("性能统计")
-        self.performance_btn.clicked.connect(self.show_performance_stats)
-        
-        self.clear_cache_btn = QPushButton("清理缓存")
-        self.clear_cache_btn.clicked.connect(self.clear_cache)
         
         button_layout.addWidget(self.screenshot_btn)
         button_layout.addWidget(self.send_task_btn)
-        button_layout.addWidget(self.performance_btn)
-        button_layout.addWidget(self.clear_cache_btn)
         layout.addLayout(button_layout)
         
-        # 执行控制面板
+        # 执行状态显示（简化版）
         execution_frame = QFrame()
         execution_frame.setFrameStyle(QFrame.Shape.StyledPanel)
         execution_layout = QVBoxLayout(execution_frame)
-        execution_layout.addWidget(QLabel("🎮 自动化执行控制:"))
+        execution_layout.addWidget(QLabel("🎮 自动化执行状态:"))
         
-        # 执行控制按钮
-        exec_button_layout = QHBoxLayout()
-        self.execute_btn = QPushButton("执行操作")
-        self.execute_btn.clicked.connect(self.execute_action_plan)
-        self.execute_btn.setEnabled(False)
-        
-        self.pause_btn = QPushButton("暂停")
-        self.pause_btn.clicked.connect(self.pause_execution)
-        self.pause_btn.setEnabled(False)
-        
-        self.stop_btn = QPushButton("停止")
-        self.stop_btn.clicked.connect(self.stop_execution)
-        self.stop_btn.setEnabled(False)
-        
-        exec_button_layout.addWidget(self.execute_btn)
-        exec_button_layout.addWidget(self.pause_btn)
-        exec_button_layout.addWidget(self.stop_btn)
-        execution_layout.addLayout(exec_button_layout)
-        
-        # 执行模式选择
-        mode_layout = QHBoxLayout()
-        mode_layout.addWidget(QLabel("执行模式:"))
-        self.execution_mode_combo = QComboBox()
-        self.execution_mode_combo.addItems(["半自动(推荐)", "手动确认", "全自动", "逐步执行"])
-        self.execution_mode_combo.setCurrentText("半自动(推荐)")
-        mode_layout.addWidget(self.execution_mode_combo)
-        execution_layout.addLayout(mode_layout)
-        
-        # 执行状态显示
         self.execution_status = QLabel("执行状态: 就绪")
         execution_layout.addWidget(self.execution_status)
         
@@ -628,16 +563,6 @@ class MainWindow(QMainWindow):
         """截图失败的回调"""
         self.status_label.setText(f"截图失败: {error_msg}")
     
-    def on_performance_update(self, stats):
-        """性能统计更新回调"""
-        cache_hit_rate = stats.get('cache_hit_rate', 0)
-        total_screenshots = stats.get('total_screenshots', 0)
-        avg_time = stats.get('avg_capture_time', 0)
-        
-        # 更新状态栏显示性能信息
-        perf_info = f"截图总数: {total_screenshots}, 缓存命中率: {cache_hit_rate:.1f}%, 平均耗时: {avg_time:.3f}s"
-        if hasattr(self, 'performance_label'):
-            self.performance_label.setText(perf_info)
     
     def update_screenshot_display(self):
         """更新截图显示（防抖后执行）"""
@@ -922,19 +847,18 @@ class MainWindow(QMainWindow):
                 )
                 self.current_action_plan.append(action)
             
-            # 启用执行按钮
+            # 自动执行操作计划
             if self.current_action_plan:
-                self.execute_btn.setEnabled(True)
-                self.claude_display.append(f"\n✅ <b>操作计划已准备就绪，可以点击'执行操作'按钮开始自动化执行</b>")
+                self.claude_display.append(f"\n🚀 <b>操作计划已准备就绪，开始自动执行...</b>")
+                self._auto_execute_action_plan()
             else:
-                self.execute_btn.setEnabled(False)
+                self.claude_display.append(f"\n⚠️ <b>未生成有效的操作计划</b>")
             
             # 更新状态
             self.status_label.setText("Claude分析完成")
             
         except Exception as e:
             self.claude_display.append(f"❌ 解析Claude结果失败: {str(e)}")
-            self.execute_btn.setEnabled(False)
     
     def display_annotated_screenshot(self, annotated_base64):
         """显示标注后的截图"""
@@ -1078,31 +1002,21 @@ Base64缓存数量: {stats.get('base64_cache_size', 0)}
         self.execution_manager.error_occurred.connect(self._on_execution_error)
         self.execution_manager.status_changed.connect(self._on_execution_status_changed)
     
-    def execute_action_plan(self):
-        """执行操作计划"""
+    def _auto_execute_action_plan(self):
+        """自动执行操作计划（无用户干预）"""
         if not self.current_action_plan:
-            QMessageBox.warning(self, "警告", "没有可执行的操作计划。请先发送任务进行分析。")
+            self.result_display.append("❌ 没有可执行的操作计划")
             return
         
         if self.execution_manager.is_executing():
-            QMessageBox.warning(self, "警告", "已有任务在执行中。")
+            self.result_display.append("❌ 已有任务在执行中")
             return
         
-        # 更新执行配置
-        mode_text = self.execution_mode_combo.currentText()
-        if mode_text == "手动确认":
-            mode = ExecutionMode.MANUAL
-        elif mode_text == "全自动":
-            mode = ExecutionMode.FULL_AUTO
-        elif mode_text == "逐步执行":
-            mode = ExecutionMode.STEP_BY_STEP
-        else:  # 半自动(推荐)
-            mode = ExecutionMode.SEMI_AUTO
-        
+        # 使用全自动模式，不需要用户确认
         config = ExecutionConfig(
-            mode=mode,
-            confirm_dangerous_actions=True,
-            screenshot_enabled=True,
+            mode=ExecutionMode.FULL_AUTO,
+            confirm_dangerous_actions=False,  # 关闭危险操作确认
+            screenshot_enabled=False,         # 关闭截图功能
             strict_mode=False,
             auto_retry=True
         )
@@ -1112,46 +1026,26 @@ Base64缓存数量: {stats.get('base64_cache_size', 0)}
         success = self.execution_manager.execute_action_plan(
             self.current_action_plan,
             self.current_ui_elements,
-            f"task_{int(time.time())}"
+            f"auto_task_{int(time.time())}"
         )
         
         if not success:
-            QMessageBox.critical(self, "错误", "启动执行失败。")
+            self.result_display.append("❌ 自动执行启动失败")
     
-    def pause_execution(self):
-        """暂停执行"""
-        self.execution_manager.pause_execution()
-    
-    def stop_execution(self):
-        """停止执行"""
-        reply = QMessageBox.question(
-            self, "确认", 
-            "确定要停止当前执行吗？", 
-            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
-        )
-        
-        if reply == QMessageBox.StandardButton.Yes:
-            self.execution_manager.stop_execution()
     
     def _on_execution_started(self, task_id):
         """执行开始处理"""
         self.execution_status.setText(f"执行状态: 正在执行 ({task_id})")
-        self.execute_btn.setEnabled(False)
-        self.pause_btn.setEnabled(True)
-        self.stop_btn.setEnabled(True)
-        self.result_display.append(f"🚀 开始执行任务: {task_id}")
+        self.result_display.append(f"🚀 开始自动执行任务: {task_id}")
     
     def _on_execution_completed(self, result):
         """执行完成处理"""
         self.execution_status.setText(f"执行状态: 完成")
-        self.execute_btn.setEnabled(True)
-        self.pause_btn.setEnabled(False)
-        self.stop_btn.setEnabled(False)
         
         # 显示执行结果
         success_rate = result.success_rate * 100
         self.result_display.append(
-            f"✅ 任务执行完成!\n"
+            f"✅ 自动执行完成!\n"
             f"   成功率: {success_rate:.1f}% ({result.completed_actions}/{result.total_actions})\n"
             f"   执行时间: {result.total_execution_time:.2f}秒\n"
             f"   状态: {result.status.value}"
@@ -1160,36 +1054,10 @@ Base64缓存数量: {stats.get('base64_cache_size', 0)}
         if result.final_error:
             self.result_display.append(f"❌ 错误: {result.final_error}")
     
-    def _on_execution_paused(self):
-        """执行暂停处理"""
-        self.execution_status.setText("执行状态: 已暂停")
-        self.pause_btn.setText("恢复")
-        self.pause_btn.clicked.disconnect()
-        self.pause_btn.clicked.connect(self.resume_execution)
-        self.result_display.append("⏸️ 执行已暂停")
-    
-    def _on_execution_resumed(self):
-        """执行恢复处理"""
-        self.execution_status.setText("执行状态: 正在执行")
-        self.pause_btn.setText("暂停")
-        self.pause_btn.clicked.disconnect()
-        self.pause_btn.clicked.connect(self.pause_execution)
-        self.result_display.append("▶️ 执行已恢复")
-    
     def _on_execution_stopped(self):
         """执行停止处理"""
         self.execution_status.setText("执行状态: 已停止")
-        self.execute_btn.setEnabled(True)
-        self.pause_btn.setEnabled(False)
-        self.stop_btn.setEnabled(False)
-        self.pause_btn.setText("暂停")
-        self.pause_btn.clicked.disconnect()
-        self.pause_btn.clicked.connect(self.pause_execution)
         self.result_display.append("⏹️ 执行已停止")
-    
-    def resume_execution(self):
-        """恢复执行"""
-        self.execution_manager.resume_execution()
     
     def _on_action_started(self, action_index, description):
         """操作开始处理"""
@@ -1211,28 +1079,14 @@ Base64缓存数量: {stats.get('base64_cache_size', 0)}
             self.result_display.append(f"   错误: {result.error_message}")
     
     def _on_confirmation_requested(self, action_index, action_type, description, callback):
-        """用户确认请求处理"""
-        reply = QMessageBox.question(
-            self, "执行确认",
-            f"即将执行操作 {action_index + 1}:\n\n"
-            f"类型: {action_type}\n"
-            f"描述: {description}\n\n"
-            f"是否继续执行？",
-            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
-        )
-        
-        confirmed = reply == QMessageBox.StandardButton.Yes
-        callback(confirmed)
-        
-        if not confirmed:
-            self.result_display.append(f"❌ 用户取消了操作 {action_index + 1}")
+        """用户确认请求处理（自动模式下直接通过）"""
+        # 在全自动模式下，直接确认所有操作
+        callback(True)
+        self.result_display.append(f"✅ 自动确认操作 {action_index + 1}: {description}")
     
     def _on_execution_error(self, error_message):
         """执行错误处理"""
         self.execution_status.setText("执行状态: 错误")
-        self.execute_btn.setEnabled(True)
-        self.pause_btn.setEnabled(False)
-        self.stop_btn.setEnabled(False)
         self.result_display.append(f"❌ 执行错误: {error_message}")
     
     def _on_execution_status_changed(self, status):
@@ -1248,9 +1102,6 @@ Base64缓存数量: {stats.get('base64_cache_size', 0)}
                 self.screenshot_worker.stop()
                 self.screenshot_worker.wait(5000)  # 等待5秒
             
-            if hasattr(self, 'performance_worker'):
-                self.performance_worker.stop()
-                self.performance_worker.wait(5000)
             
             # 关闭截图管理器
             if hasattr(self, 'screenshot_manager'):
@@ -1261,7 +1112,7 @@ Base64缓存数量: {stats.get('base64_cache_size', 0)}
                 self.server_client.disconnect_sync()
             
             # 停止执行管理器
-            if hasattr(self, 'execution_manager'):
+            if hasattr(self, 'execution_manager') and self.execution_manager.is_executing():
                 self.execution_manager.stop_execution()
             
             # 关闭所有ServerClient连接
