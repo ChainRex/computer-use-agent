@@ -1,6 +1,7 @@
 import sys
 import asyncio
 import os
+import platform
 from PyQt6.QtWidgets import (QApplication, QMainWindow, QVBoxLayout, QHBoxLayout, 
                             QWidget, QPushButton, QTextEdit, QLabel, QLineEdit, 
                             QTextBrowser, QSplitter, QFrame, QTabWidget, QTableWidget, 
@@ -155,6 +156,29 @@ class TaskWorker(QThread):
         self.server_url = server_url
         self.text_command = text_command
         self.screenshot_base64 = screenshot_base64
+        self.os_info = self._get_os_info()
+    
+    def _get_os_info(self):
+        """获取操作系统信息"""
+        try:
+            return {
+                "system": platform.system(),
+                "version": platform.version(),
+                "release": platform.release(),
+                "machine": platform.machine(),
+                "processor": platform.processor(),
+                "platform": platform.platform()
+            }
+        except Exception as e:
+            return {
+                "system": "Unknown",
+                "version": "Unknown",
+                "release": "Unknown", 
+                "machine": "Unknown",
+                "processor": "Unknown",
+                "platform": "Unknown",
+                "error": str(e)
+            }
     
     def run(self):
         """在子线程中运行异步任务（支持分阶段响应）"""
@@ -198,7 +222,8 @@ class TaskWorker(QThread):
                     "data": {
                         "text_command": self.text_command,
                         "screenshot_base64": self.screenshot_base64,
-                        "user_id": "default"
+                        "user_id": "default",
+                        "os_info": self.os_info
                     }
                 }
                 
@@ -790,12 +815,15 @@ class MainWindow(QMainWindow):
                 for i, action in enumerate(actions, 1):
                     action_type = action.get('type', '未知')
                     description = action.get('description', '无描述')
+                    element_id = action.get('element_id')
                     coordinates = action.get('coordinates')
                     text = action.get('text')
                     duration = action.get('duration')
                     
                     action_str = f"  {i}. <b>{action_type}</b>: {description}"
                     
+                    if element_id:
+                        action_str += f" [元素ID: {element_id}]"
                     if coordinates:
                         action_str += f" [坐标: {coordinates}]"
                     if text:

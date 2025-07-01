@@ -1,5 +1,5 @@
 from pydantic import BaseModel
-from typing import List, Optional, Union
+from typing import List, Optional, Union, Dict, Any
 from enum import Enum
 
 class MessageType(str, Enum):
@@ -9,11 +9,22 @@ class MessageType(str, Enum):
     CLAUDE_RESULT = "claude_result"  # Claude分析结果
     ERROR = "error"
 
+class OSInfo(BaseModel):
+    """操作系统信息"""
+    system: str  # Windows, macOS, Linux
+    version: str
+    release: str
+    machine: str
+    processor: str
+    platform: str
+    error: Optional[str] = None
+
 class TaskAnalysisRequest(BaseModel):
     """客户端发送给服务端的任务分析请求"""
     text_command: str
     screenshot_base64: str
     user_id: str = "default"
+    os_info: Optional[OSInfo] = None
 
 class ActionType(str, Enum):
     """pyautogui操作类型枚举"""

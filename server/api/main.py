@@ -178,7 +178,8 @@ async def handle_task_analysis(message: dict, websocket: WebSocket) -> dict:
                     request.text_command,
                     request.screenshot_base64,
                     ui_elements,
-                    annotated_screenshot
+                    annotated_screenshot,
+                    request.os_info
                 )
                 
                 claude_processing_time = time.time() - claude_start_time

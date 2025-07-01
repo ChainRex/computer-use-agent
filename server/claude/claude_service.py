@@ -44,7 +44,8 @@ class ClaudeService:
         text_command: str, 
         screenshot_base64: str, 
         ui_elements: List[UIElement],
-        annotated_screenshot_base64: Optional[str] = None
+        annotated_screenshot_base64: Optional[str] = None,
+        os_info: Optional[Dict] = None
     ) -> Tuple[List[ActionPlan], str, float]:
         """
         使用Claude分析任务并生成pyautogui操作指令
@@ -66,7 +67,7 @@ class ClaudeService:
             )
             
             # 构建Claude分析提示
-            prompt = self._build_analysis_prompt(text_command, ui_elements)
+            prompt = self._build_analysis_prompt(text_command, ui_elements, os_info)
             
             # 执行Claude命令（带重试机制）
             claude_response = self._execute_claude_command_with_retry(prompt, image_path)
@@ -111,7 +112,7 @@ class ClaudeService:
             logger.error(f"Failed to save image: {str(e)}")
             raise
     
-    def _build_analysis_prompt(self, text_command: str, ui_elements: List[UIElement]) -> str:
+    def _build_analysis_prompt(self, text_command: str, ui_elements: List[UIElement], os_info: Optional[Dict] = None) -> str:
         """
         构建Claude分析提示
         
@@ -134,9 +135,18 @@ class ClaudeService:
         
         elements_text = "\n".join(elements_description) if elements_description else "无UI元素检测到"
         
+        # 构建操作系统信息
+        os_text = "未知"
+        if os_info:
+            system = os_info.get('system', '未知')
+            version = os_info.get('version', '未知')
+            os_text = f"{system} {version}"
+        
         prompt = f"""请分析这个计算机屏幕截图和用户指令，生成详细的pyautogui操作步骤。
 
 用户指令: {text_command}
+
+操作系统: {os_text}
 
 检测到的UI元素:
 {elements_text}
@@ -180,7 +190,13 @@ JSON格式要求:
 2. reasoning和description字段中不要使用双引号，用单引号或中文标点
 3. 确保JSON格式完全有效
 4. 对于点击操作，必须使用element_id引用上面列出的UI元素
-5. 如果没有合适的UI元素可以点击，在reasoning中说明并提供替代方案"""
+5. 如果没有合适的UI元素可以点击，在reasoning中说明并提供替代方案
+
+操作系统特定要求:
+- Windows系统: 使用Windows特定的快捷键(如Win+R, Alt+Tab等)
+- macOS系统: 使用Mac特定的快捷键(如Cmd+Space, Cmd+Tab等)  
+- Linux系统: 使用Linux桌面环境相关的快捷键
+- 根据操作系统调整操作方式和界面元素识别策略"""
 
         return prompt
     
