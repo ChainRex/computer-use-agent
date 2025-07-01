@@ -324,8 +324,8 @@ class MainWindow(QMainWindow):
         
         # UI元素表格
         self.elements_table = QTableWidget()
-        self.elements_table.setColumnCount(6)
-        self.elements_table.setHorizontalHeaderLabels(['ID', '类型', '描述', '坐标', '文本', '置信度'])
+        self.elements_table.setColumnCount(5)
+        self.elements_table.setHorizontalHeaderLabels(['ID', '类型', '描述', '坐标', '文本'])
         
         # 设置表格列宽
         header = self.elements_table.horizontalHeader()
@@ -334,7 +334,6 @@ class MainWindow(QMainWindow):
         header.setSectionResizeMode(2, QHeaderView.ResizeMode.Stretch)            # 描述列
         header.setSectionResizeMode(3, QHeaderView.ResizeMode.ResizeToContents)  # 坐标列
         header.setSectionResizeMode(4, QHeaderView.ResizeMode.ResizeToContents)  # 文本列
-        header.setSectionResizeMode(5, QHeaderView.ResizeMode.ResizeToContents)  # 置信度列
         
         elements_layout.addWidget(self.elements_table)
         
@@ -669,9 +668,6 @@ class MainWindow(QMainWindow):
                 text = elem.text[:50] + "..." if len(elem.text) > 50 else elem.text
                 self.elements_table.setItem(row, 4, QTableWidgetItem(text))
                 
-                # 置信度
-                confidence_str = f"{elem.confidence:.2f}" if elem.confidence is not None and elem.confidence >= 0 else "N/A"
-                self.elements_table.setItem(row, 5, QTableWidgetItem(confidence_str))
             
             # 更新统计信息
             stats_text = f"UI元素统计: 总计{len(ui_elements)}个元素"
