@@ -43,8 +43,8 @@ class OmniParserService:
         return {
             'som_model_path': os.path.join(server_dir, 'weights/icon_detect/model.pt'),
             'caption_model_name': 'florence2',
-            'caption_model_path': '/root/autodl-tmp/OmniParser/microsoft/Florence-2-base-ft',  # 使用本地路径
-            'processor_path': '/root/autodl-tmp/OmniParser/microsoft/Florence-2-base-ft',   # 使用本地路径
+            'caption_model_path': '/root/autodl-tmp/computer-use-agent/server/weights/icon_caption_florence',  # 使用本地路径
+            'processor_path': '/root/autodl-tmp/computer-use-agent/server/weights/Florence-2-base-ft',   # 使用本地路径
             'BOX_TRESHOLD': 0.05
         }
     

@@ -49,7 +49,7 @@ import torchvision.transforms as T
 from .box_annotator import BoxAnnotator 
 
 
-def get_caption_model_processor(model_name, model_name_or_path="Salesforce/blip2-opt-2.7b",processor_path="microsoft/Florence-2-base", device=None):
+def get_caption_model_processor(model_name, model_name_or_path="Salesforce/blip2-opt-2.7b",processor_path="", device=None):
     print('model_name_or_path', model_name_or_path)
     if not device:
         device = "cuda" if torch.cuda.is_available() else "cpu"
@@ -65,14 +65,40 @@ def get_caption_model_processor(model_name, model_name_or_path="Salesforce/blip2
             model_name_or_path, device_map=None, torch_dtype=torch.float16
         ).to(device)
     elif model_name == "florence2":
-        from transformers import AutoProcessor, AutoModelForCausalLM 
-        print('processor_path', processor_path)
-        processor = AutoProcessor.from_pretrained(processor_path, trust_remote_code=True,local_files_only=True)
-        print("ok")
-        if device == 'cpu':
-            model = AutoModelForCausalLM.from_pretrained(model_name_or_path, torch_dtype=torch.float32, trust_remote_code=True, local_files_only=True)
-        else:
-            model = AutoModelForCausalLM.from_pretrained(model_name_or_path, torch_dtype=torch.float16, trust_remote_code=True, local_files_only=True).to(device)
+        import sys
+        import os
+        # Add the local model path to sys.path so it can find the custom modules
+        model_path = os.path.abspath(processor_path)
+        if model_path not in sys.path:
+            sys.path.insert(0, model_path)
+        
+        try:
+            # Try to import the Florence2 classes directly from the local directory
+            from configuration_florence2 import Florence2Config
+            from modeling_florence2 import Florence2ForConditionalGeneration
+            from processing_florence2 import Florence2Processor
+            
+            print('processor_path', processor_path)
+            # Load processor directly from local files
+            processor = Florence2Processor.from_pretrained(processor_path, local_files_only=True)
+            print("ok")
+            
+            # Load model directly from local files
+            if device == 'cpu':
+                model = Florence2ForConditionalGeneration.from_pretrained(model_name_or_path, torch_dtype=torch.float32, local_files_only=True)
+            else:
+                model = Florence2ForConditionalGeneration.from_pretrained(model_name_or_path, torch_dtype=torch.float16, local_files_only=True).to(device)
+                
+        except ImportError as e:
+            print(f"Direct import failed: {e}, falling back to AutoModel")
+            from transformers import AutoProcessor, AutoModelForCausalLM 
+            print('processor_path', processor_path)
+            processor = AutoProcessor.from_pretrained(processor_path, trust_remote_code=True, local_files_only=True, force_download=False, resume_download=False)
+            print("ok")
+            if device == 'cpu':
+                model = AutoModelForCausalLM.from_pretrained(model_name_or_path, torch_dtype=torch.float32, trust_remote_code=True, local_files_only=True, force_download=False, resume_download=False)
+            else:
+                model = AutoModelForCausalLM.from_pretrained(model_name_or_path, torch_dtype=torch.float16, trust_remote_code=True, local_files_only=True, force_download=False, resume_download=False).to(device)
     return {'model': model.to(device), 'processor': processor}
 
 

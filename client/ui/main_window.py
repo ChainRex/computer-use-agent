@@ -542,7 +542,7 @@ class MainWindow(QMainWindow):
                 self.elements_table.setItem(row, 4, QTableWidgetItem(text))
                 
                 # 置信度
-                confidence_str = f"{elem.confidence:.2f}" if elem.confidence > 0 else "N/A"
+                confidence_str = f"{elem.confidence:.2f}" if elem.confidence is not None and elem.confidence >= 0 else "N/A"
                 self.elements_table.setItem(row, 5, QTableWidgetItem(confidence_str))
             
             # 更新统计信息

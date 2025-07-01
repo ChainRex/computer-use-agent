@@ -1,6 +1,12 @@
 import os
 os.environ['TRANSFORMERS_OFFLINE'] = '1'
 os.environ['HF_DATASETS_OFFLINE'] = '1'
+os.environ['HF_HUB_OFFLINE'] = '1'
+os.environ['DISABLE_TELEMETRY'] = '1'
+os.environ['HF_HOME'] = '/tmp/hf_cache'
+os.environ['TRANSFORMERS_CACHE'] = '/tmp/hf_cache'
+os.environ['HF_DATASETS_CACHE'] = '/tmp/hf_cache'
+os.environ['HUGGINGFACE_HUB_CACHE'] = '/tmp/hf_cache'
 from .utils import get_som_labeled_img, get_caption_model_processor, get_yolo_model, check_ocr_box
 import torch
 from PIL import Image
