@@ -144,9 +144,11 @@ class DisconnectWorker(QThread):
             loop.close()
 
 class TaskWorker(QThread):
-    """处理异步任务的工作线程（优化版）"""
+    """处理异步任务的工作线程（支持分阶段响应）"""
     task_completed = pyqtSignal(object)  # 任务完成信号
     task_failed = pyqtSignal(str)        # 任务失败信号
+    omniparser_result = pyqtSignal(object)  # OmniParser结果信号
+    claude_result = pyqtSignal(object)      # Claude结果信号
     
     def __init__(self, server_url, text_command, screenshot_base64):
         super().__init__()
@@ -155,32 +157,75 @@ class TaskWorker(QThread):
         self.screenshot_base64 = screenshot_base64
     
     def run(self):
-        """在子线程中运行异步任务（使用优化的同步方法）"""
+        """在子线程中运行异步任务（支持分阶段响应）"""
         try:
-            # 使用优化的ServerClient
-            server_client = ServerClient(self.server_url)
+            # 创建新的事件循环
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
             
-            # 使用同步连接方法
-            if not server_client.connect_sync():
-                self.task_failed.emit("无法连接到服务端")
-                return
-            
-            # 使用同步发送任务方法
-            result = server_client.send_task_sync(
-                self.text_command, 
-                self.screenshot_base64
-            )
-            
-            # 断开连接
-            server_client.disconnect_sync()
-            
-            if result:
-                self.task_completed.emit(result)
-            else:
-                self.task_failed.emit("服务端返回空结果")
+            # 运行异步任务
+            loop.run_until_complete(self._run_async_task())
                 
         except Exception as e:
             self.task_failed.emit(f"任务执行失败: {str(e)}")
+        finally:
+            loop.close()
+    
+    async def _run_async_task(self):
+        """异步任务执行"""
+        import websockets
+        import json
+        import uuid
+        
+        try:
+            # 连接WebSocket
+            async with websockets.connect(self.server_url, max_size=10*1024*1024) as websocket:
+                # 构建任务请求
+                task_id = str(uuid.uuid4())
+                request = {
+                    "type": "analyze_task",
+                    "task_id": task_id,
+                    "timestamp": time.time(),
+                    "data": {
+                        "text_command": self.text_command,
+                        "screenshot_base64": self.screenshot_base64,
+                        "user_id": "default"
+                    }
+                }
+                
+                # 发送请求
+                await websocket.send(json.dumps(request))
+                
+                # 接收分阶段响应
+                while True:
+                    try:
+                        response_text = await asyncio.wait_for(websocket.recv(), timeout=60.0)
+                        response = json.loads(response_text)
+                        
+                        message_type = response.get("type")
+                        
+                        if message_type == "omniparser_result":
+                            # OmniParser结果
+                            self.omniparser_result.emit(response)
+                        elif message_type == "claude_result":
+                            # Claude分析结果
+                            self.claude_result.emit(response)
+                        elif message_type == "analysis_result":
+                            # 最终结果
+                            self.task_completed.emit(response)
+                            break
+                        elif message_type == "error":
+                            self.task_failed.emit(response.get("message", "服务端错误"))
+                            break
+                        else:
+                            print(f"未知消息类型: {message_type}")
+                            
+                    except asyncio.TimeoutError:
+                        self.task_failed.emit("服务端响应超时")
+                        break
+                        
+        except Exception as e:
+            self.task_failed.emit(f"连接失败: {str(e)}")
 
 class MainWindow(QMainWindow):
     def __init__(self):
@@ -312,10 +357,40 @@ class MainWindow(QMainWindow):
         # 第一个标签页：执行结果
         result_tab = QWidget()
         result_layout = QVBoxLayout(result_tab)
-        result_layout.addWidget(QLabel("执行结果:"))
+        
+        # 分割器 - 上下布局，上半部分显示OmniParser结果，下半部分显示Claude结果
+        result_splitter = QSplitter(Qt.Orientation.Vertical)
+        result_layout.addWidget(result_splitter)
+        
+        # OmniParser结果区域
+        omni_frame = QFrame()
+        omni_frame.setFrameStyle(QFrame.Shape.StyledPanel)
+        omni_layout = QVBoxLayout(omni_frame)
+        omni_layout.addWidget(QLabel("🔍 OmniParser 屏幕元素检测结果:"))
+        self.omniparser_display = QTextBrowser()
+        self.omniparser_display.setMaximumHeight(200)
+        omni_layout.addWidget(self.omniparser_display)
+        result_splitter.addWidget(omni_frame)
+        
+        # Claude分析结果区域
+        claude_frame = QFrame()
+        claude_frame.setFrameStyle(QFrame.Shape.StyledPanel)
+        claude_layout = QVBoxLayout(claude_frame)
+        claude_layout.addWidget(QLabel("🧠 Claude 智能分析结果:"))
+        self.claude_display = QTextBrowser()
+        claude_layout.addWidget(self.claude_display)
+        result_splitter.addWidget(claude_frame)
+        
+        # 设置分割器比例
+        result_splitter.setSizes([150, 300])
+        
+        # 保持原有的统一结果显示（兼容性）
+        result_layout.addWidget(QLabel("📋 任务执行结果:"))
         self.result_display = QTextBrowser()
+        self.result_display.setMaximumHeight(150)
         result_layout.addWidget(self.result_display)
-        self.tab_widget.addTab(result_tab, "执行结果")
+        
+        self.tab_widget.addTab(result_tab, "分析结果")
         
         # 第二个标签页：UI元素详情
         elements_tab = QWidget()
@@ -557,7 +632,13 @@ class MainWindow(QMainWindow):
         )
         self.task_worker.task_completed.connect(self.on_task_completed)
         self.task_worker.task_failed.connect(self.on_task_failed)
+        self.task_worker.omniparser_result.connect(self.on_omniparser_result)
+        self.task_worker.claude_result.connect(self.on_claude_result)
         self.task_worker.start()
+        
+        # 清空之前的结果显示
+        self.omniparser_display.clear()
+        self.claude_display.clear()
     
     def on_task_completed(self, result):
         """任务完成回调"""
@@ -604,6 +685,107 @@ class MainWindow(QMainWindow):
         
         self.status_label.setText("任务完成")
         self.send_task_btn.setEnabled(True)
+    
+    def on_omniparser_result(self, response):
+        """处理OmniParser结果"""
+        try:
+            data = response.get('data', {})
+            task_id = response.get('task_id', '未知')
+            processing_time = data.get('processing_time', 0)
+            element_count = data.get('element_count', 0)
+            
+            # 更新OmniParser显示区域
+            self.omniparser_display.append(f"🔍 <b>OmniParser 屏幕元素检测完成</b>")
+            self.omniparser_display.append(f"📊 处理时间: {processing_time:.2f}秒")
+            self.omniparser_display.append(f"🎯 检测到 {element_count} 个UI元素")
+            
+            # 显示检测到的UI元素概览
+            ui_elements = data.get('ui_elements', [])
+            if ui_elements:
+                self.omniparser_display.append(f"\n📋 <b>检测到的UI元素:</b>")
+                for i, elem in enumerate(ui_elements[:5]):  # 显示前5个
+                    elem_type = elem.get('type', '未知')
+                    description = elem.get('description', '无描述')[:30]
+                    coordinates = elem.get('coordinates', [])
+                    coord_str = f"({coordinates[0]:.0f},{coordinates[1]:.0f})" if len(coordinates) >= 2 else "未知位置"
+                    self.omniparser_display.append(f"  {i+1}. {elem_type} {coord_str}: {description}")
+                
+                if len(ui_elements) > 5:
+                    self.omniparser_display.append(f"  ... 还有 {len(ui_elements)-5} 个元素")
+            
+            # 更新UI元素表格
+            if ui_elements:
+                self.update_elements_table(ui_elements)
+            
+            # 显示标注截图
+            annotated_screenshot = data.get('annotated_screenshot_base64')
+            if annotated_screenshot:
+                self.display_annotated_screenshot(annotated_screenshot)
+                self.omniparser_display.append(f"\n📸 <b>标注截图已更新</b>")
+                self.annotated_info.setText(f"OmniParser: 检测到{element_count}个元素，处理时间{processing_time:.2f}秒")
+            
+            # 更新状态
+            self.status_label.setText("OmniParser分析完成，等待Claude分析...")
+            
+        except Exception as e:
+            self.omniparser_display.append(f"❌ 解析OmniParser结果失败: {str(e)}")
+    
+    def on_claude_result(self, response):
+        """处理Claude分析结果"""
+        try:
+            data = response.get('data', {})
+            task_id = response.get('task_id', '未知')
+            processing_time = data.get('processing_time', 0)
+            confidence = data.get('confidence', 0)
+            reasoning = data.get('reasoning', '无推理信息')
+            actions = data.get('actions', [])
+            
+            # 更新Claude显示区域
+            self.claude_display.append(f"🧠 <b>Claude 智能分析完成</b>")
+            self.claude_display.append(f"⏱️ 处理时间: {processing_time:.2f}秒")
+            self.claude_display.append(f"🎯 置信度: {confidence:.2%}")
+            
+            # 显示推理过程
+            self.claude_display.append(f"\n💭 <b>分析推理:</b>")
+            # 将长文本分段显示
+            reasoning_lines = reasoning.split('\n')
+            for line in reasoning_lines:
+                if line.strip():
+                    # 每60字符换行
+                    while len(line) > 60:
+                        self.claude_display.append(f"  {line[:60]}")
+                        line = line[60:]
+                    if line.strip():
+                        self.claude_display.append(f"  {line}")
+            
+            # 显示操作计划
+            if actions:
+                self.claude_display.append(f"\n🎮 <b>生成的操作计划 ({len(actions)}个步骤):</b>")
+                for i, action in enumerate(actions, 1):
+                    action_type = action.get('type', '未知')
+                    description = action.get('description', '无描述')
+                    coordinates = action.get('coordinates')
+                    text = action.get('text')
+                    duration = action.get('duration')
+                    
+                    action_str = f"  {i}. <b>{action_type}</b>: {description}"
+                    
+                    if coordinates:
+                        action_str += f" [坐标: {coordinates}]"
+                    if text:
+                        action_str += f" [文本: '{text}']"
+                    if duration:
+                        action_str += f" [时长: {duration}秒]"
+                    
+                    self.claude_display.append(action_str)
+            else:
+                self.claude_display.append(f"\n⚠️ 未生成操作计划")
+            
+            # 更新状态
+            self.status_label.setText("Claude分析完成")
+            
+        except Exception as e:
+            self.claude_display.append(f"❌ 解析Claude结果失败: {str(e)}")
     
     def display_annotated_screenshot(self, annotated_base64):
         """显示标注后的截图"""

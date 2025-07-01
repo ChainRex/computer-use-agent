@@ -9,16 +9,22 @@ import os
 project_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 sys.path.append(project_root)
 
-from shared.schemas.data_models import TaskAnalysisRequest, TaskAnalysisResponse, ActionPlan, UIElement
+from shared.schemas.data_models import (
+    TaskAnalysisRequest, TaskAnalysisResponse, ActionPlan, UIElement,
+    OmniParserResult, ClaudeAnalysisResult
+)
 
 app = FastAPI(title="Computer Use Agent Server", version="1.0.0")
 
-# 全局OmniParser服务实例
+# 全局服务实例
 omniparser_service = None
+claude_service = None
 
-def initialize_omniparser():
-    """初始化OmniParser服务"""
-    global omniparser_service
+def initialize_services():
+    """初始化所有服务"""
+    global omniparser_service, claude_service
+    
+    # 初始化OmniParser服务
     try:
         from server.omniparser import OmniParserService
         omniparser_service = OmniParserService()
@@ -26,9 +32,18 @@ def initialize_omniparser():
     except Exception as e:
         print(f"❌ OmniParser服务初始化失败: {e}")
         print("📝 将使用模拟模式")
+    
+    # 初始化Claude服务
+    try:
+        from server.claude import ClaudeService
+        claude_service = ClaudeService()
+        print("✅ Claude服务初始化成功")
+    except Exception as e:
+        print(f"❌ Claude服务初始化失败: {e}")
+        print("📝 将使用模拟分析模式")
 
-# 启动时初始化OmniParser
-initialize_omniparser()
+# 启动时初始化所有服务
+initialize_services()
 
 class ConnectionManager:
     def __init__(self):
@@ -53,10 +68,12 @@ async def root():
 @app.get("/health")
 async def health_check():
     omniparser_status = omniparser_service.get_status() if omniparser_service else {"available": False}
+    claude_status = {"available": claude_service is not None} if claude_service else {"available": False}
     return {
         "status": "healthy", 
         "timestamp": time.time(),
-        "omniparser": omniparser_status
+        "omniparser": omniparser_status,
+        "claude": claude_status
     }
 
 @app.websocket("/ws")
@@ -72,8 +89,8 @@ async def websocket_endpoint(websocket: WebSocket):
             print(f"收到消息类型: {message.get('type')}")
             
             if message.get("type") == "analyze_task":
-                # 处理任务分析请求
-                response = await handle_task_analysis(message)
+                # 处理任务分析请求（支持分阶段响应）
+                response = await handle_task_analysis(message, websocket)
                 await websocket.send_text(json.dumps(response))
             else:
                 # 未知消息类型
@@ -89,8 +106,8 @@ async def websocket_endpoint(websocket: WebSocket):
         print(f"WebSocket错误: {e}")
         manager.disconnect(websocket)
 
-async def handle_task_analysis(message: dict) -> dict:
-    """处理任务分析请求"""
+async def handle_task_analysis(message: dict, websocket: WebSocket) -> dict:
+    """处理任务分析请求（支持分阶段响应）"""
     try:
         # 解析请求数据
         task_data = message["data"]
@@ -101,9 +118,10 @@ async def handle_task_analysis(message: dict) -> dict:
         print(f"指令: {request.text_command}")
         print(f"截图数据长度: {len(request.screenshot_base64)}")
         
-        # 使用OmniParser分析屏幕元素
+        # 第一阶段：使用OmniParser分析屏幕元素
         ui_elements = []
         annotated_screenshot = None
+        omni_start_time = time.time()
         
         if omniparser_service and omniparser_service.is_available():
             try:
@@ -123,18 +141,93 @@ async def handle_task_analysis(message: dict) -> dict:
                 ]
                 
                 annotated_screenshot = annotated_img_base64
+                omni_processing_time = time.time() - omni_start_time
+                
                 print(f"✅ 检测到 {len(ui_elements)} 个UI元素")
+                
+                # 立即发送OmniParser结果
+                omni_result = OmniParserResult(
+                    task_id=task_id,
+                    success=True,
+                    ui_elements=ui_elements,
+                    annotated_screenshot_base64=annotated_screenshot,
+                    processing_time=omni_processing_time,
+                    element_count=len(ui_elements)
+                )
+                
+                omni_message = {
+                    "type": "omniparser_result",
+                    "task_id": task_id,
+                    "timestamp": time.time(),
+                    "data": omni_result.model_dump()
+                }
+                
+                await websocket.send_text(json.dumps(omni_message))
+                print("📤 OmniParser结果已发送给客户端")
                 
             except Exception as e:
                 print(f"⚠️ OmniParser分析失败，使用模拟模式: {e}")
         
-        # AI分析过程（集成UI元素信息）
-        response = simulate_ai_analysis(task_id, request, ui_elements)
+        # 第二阶段：使用Claude进行AI分析
+        claude_start_time = time.time()
         
-        # 添加OmniParser结果
-        response.ui_elements = ui_elements
-        response.annotated_screenshot_base64 = annotated_screenshot
+        if claude_service:
+            try:
+                print("🧠 使用Claude进行智能任务分析...")
+                actions, reasoning, confidence = claude_service.analyze_task_with_claude(
+                    request.text_command,
+                    request.screenshot_base64,
+                    ui_elements,
+                    annotated_screenshot
+                )
+                
+                claude_processing_time = time.time() - claude_start_time
+                
+                # 发送Claude分析结果
+                claude_result = ClaudeAnalysisResult(
+                    task_id=task_id,
+                    success=True,
+                    reasoning=reasoning,
+                    actions=actions,
+                    expected_outcome="根据Claude分析生成的操作计划",
+                    confidence=confidence,
+                    processing_time=claude_processing_time
+                )
+                
+                claude_message = {
+                    "type": "claude_result",
+                    "task_id": task_id,
+                    "timestamp": time.time(),
+                    "data": claude_result.model_dump()
+                }
+                
+                await websocket.send_text(json.dumps(claude_message))
+                print(f"✅ Claude分析完成，生成 {len(actions)} 个操作步骤")
+                
+                # 创建最终响应（兼容性）
+                response = TaskAnalysisResponse(
+                    task_id=task_id,
+                    success=True,
+                    reasoning=reasoning,
+                    actions=actions,
+                    expected_outcome="根据Claude分析生成的操作计划",
+                    confidence=confidence,
+                    ui_elements=ui_elements,
+                    annotated_screenshot_base64=annotated_screenshot
+                )
+                
+            except Exception as e:
+                print(f"⚠️ Claude分析失败，使用模拟分析: {e}")
+                response = simulate_ai_analysis(task_id, request, ui_elements)
+                response.ui_elements = ui_elements
+                response.annotated_screenshot_base64 = annotated_screenshot
+        else:
+            print("📝 使用模拟AI分析...")
+            response = simulate_ai_analysis(task_id, request, ui_elements)
+            response.ui_elements = ui_elements
+            response.annotated_screenshot_base64 = annotated_screenshot
         
+        # 返回最终结果
         return {
             "type": "analysis_result",
             "task_id": task_id,

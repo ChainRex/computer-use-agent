@@ -9,7 +9,10 @@ import sys
 import os
 sys.path.append(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 
-from shared.schemas.data_models import TaskAnalysisRequest, TaskAnalysisResponse
+from shared.schemas.data_models import (
+    TaskAnalysisRequest, TaskAnalysisResponse, 
+    OmniParserResult, ClaudeAnalysisResult
+)
 
 class ServerClient:
     _shared_loop = None  # 共享事件循环
