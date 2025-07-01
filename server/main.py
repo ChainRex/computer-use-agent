@@ -6,6 +6,13 @@ Computer Use Agent - 服务端入口
 import sys
 import os
 
+# 设置Hugging Face离线模式环境变量
+os.environ['HF_HUB_OFFLINE'] = '1'
+os.environ['TRANSFORMERS_OFFLINE'] = '1'
+os.environ['HF_HUB_DISABLE_TELEMETRY'] = '1'
+os.environ['HF_HUB_DISABLE_PROGRESS_BARS'] = '1'
+os.environ['HF_HOME'] = '/root/autodl-tmp/huggingface'
+
 # 添加项目根目录到Python路径
 project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.append(project_root)

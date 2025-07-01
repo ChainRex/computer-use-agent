@@ -9,9 +9,26 @@ import os
 project_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 sys.path.append(project_root)
 
-from shared.schemas.data_models import TaskAnalysisRequest, TaskAnalysisResponse, ActionPlan
+from shared.schemas.data_models import TaskAnalysisRequest, TaskAnalysisResponse, ActionPlan, UIElement
 
 app = FastAPI(title="Computer Use Agent Server", version="1.0.0")
+
+# 全局OmniParser服务实例
+omniparser_service = None
+
+def initialize_omniparser():
+    """初始化OmniParser服务"""
+    global omniparser_service
+    try:
+        from server.omniparser import OmniParserService
+        omniparser_service = OmniParserService()
+        print("✅ OmniParser服务初始化成功")
+    except Exception as e:
+        print(f"❌ OmniParser服务初始化失败: {e}")
+        print("📝 将使用模拟模式")
+
+# 启动时初始化OmniParser
+initialize_omniparser()
 
 class ConnectionManager:
     def __init__(self):
@@ -35,7 +52,12 @@ async def root():
 
 @app.get("/health")
 async def health_check():
-    return {"status": "healthy", "timestamp": time.time()}
+    omniparser_status = omniparser_service.get_status() if omniparser_service else {"available": False}
+    return {
+        "status": "healthy", 
+        "timestamp": time.time(),
+        "omniparser": omniparser_status
+    }
 
 @app.websocket("/ws")
 async def websocket_endpoint(websocket: WebSocket):
@@ -79,8 +101,39 @@ async def handle_task_analysis(message: dict) -> dict:
         print(f"指令: {request.text_command}")
         print(f"截图数据长度: {len(request.screenshot_base64)}")
         
-        # 模拟AI分析过程（这里后续会集成真实的AI模型）
-        response = simulate_ai_analysis(task_id, request)
+        # 使用OmniParser分析屏幕元素
+        ui_elements = []
+        annotated_screenshot = None
+        
+        if omniparser_service and omniparser_service.is_available():
+            try:
+                print("🔍 使用OmniParser分析屏幕元素...")
+                annotated_img_base64, parsed_elements = omniparser_service.parse_screen(request.screenshot_base64)
+                
+                # 转换为标准格式
+                ui_elements = [
+                    UIElement(
+                        id=elem.get('id', i),
+                        type=elem.get('type', 'unknown'),
+                        description=elem.get('description', ''),
+                        coordinates=elem.get('coordinates', []),
+                        text=elem.get('text', ''),
+                        confidence=elem.get('confidence', 0.0)
+                    ) for i, elem in enumerate(parsed_elements)
+                ]
+                
+                annotated_screenshot = annotated_img_base64
+                print(f"✅ 检测到 {len(ui_elements)} 个UI元素")
+                
+            except Exception as e:
+                print(f"⚠️ OmniParser分析失败，使用模拟模式: {e}")
+        
+        # AI分析过程（集成UI元素信息）
+        response = simulate_ai_analysis(task_id, request, ui_elements)
+        
+        # 添加OmniParser结果
+        response.ui_elements = ui_elements
+        response.annotated_screenshot_base64 = annotated_screenshot
         
         return {
             "type": "analysis_result",
@@ -98,7 +151,7 @@ async def handle_task_analysis(message: dict) -> dict:
             "message": f"任务分析失败: {str(e)}"
         }
 
-def simulate_ai_analysis(task_id: str, request: TaskAnalysisRequest) -> TaskAnalysisResponse:
+def simulate_ai_analysis(task_id: str, request: TaskAnalysisRequest, ui_elements: list = None) -> TaskAnalysisResponse:
     """模拟AI分析过程（临时实现）"""
     
     command = request.text_command.lower()

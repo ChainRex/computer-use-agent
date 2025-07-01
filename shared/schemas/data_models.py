@@ -22,6 +22,15 @@ class ActionPlan(BaseModel):
     text: Optional[str] = None
     duration: Optional[float] = None
 
+class UIElement(BaseModel):
+    """屏幕UI元素"""
+    id: int
+    type: str
+    description: str
+    coordinates: List[float]  # [x1, y1, x2, y2] 或 [x, y, width, height]
+    text: str
+    confidence: float
+
 class TaskAnalysisResponse(BaseModel):
     """服务端返回给客户端的分析结果"""
     task_id: str
@@ -31,3 +40,6 @@ class TaskAnalysisResponse(BaseModel):
     expected_outcome: Optional[str] = None
     confidence: Optional[float] = None
     error_message: Optional[str] = None
+    # OmniParser相关字段
+    ui_elements: Optional[List[UIElement]] = None
+    annotated_screenshot_base64: Optional[str] = None

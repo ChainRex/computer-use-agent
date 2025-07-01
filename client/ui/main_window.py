@@ -3,7 +3,8 @@ import asyncio
 import os
 from PyQt6.QtWidgets import (QApplication, QMainWindow, QVBoxLayout, QHBoxLayout, 
                             QWidget, QPushButton, QTextEdit, QLabel, QLineEdit, 
-                            QTextBrowser, QSplitter, QFrame)
+                            QTextBrowser, QSplitter, QFrame, QTabWidget, QTableWidget, 
+                            QTableWidgetItem, QHeaderView, QScrollArea)
 from PyQt6.QtCore import Qt, QThread, pyqtSignal, QTimer
 from PyQt6.QtGui import QFont, QPixmap
 
@@ -213,10 +214,45 @@ class MainWindow(QMainWindow):
         button_layout.addWidget(self.send_task_btn)
         layout.addLayout(button_layout)
         
-        # 结果显示区域
-        layout.addWidget(QLabel("执行结果:"))
+        # 创建标签页面板
+        self.tab_widget = QTabWidget()
+        
+        # 第一个标签页：执行结果
+        result_tab = QWidget()
+        result_layout = QVBoxLayout(result_tab)
+        result_layout.addWidget(QLabel("执行结果:"))
         self.result_display = QTextBrowser()
-        layout.addWidget(self.result_display)
+        result_layout.addWidget(self.result_display)
+        self.tab_widget.addTab(result_tab, "执行结果")
+        
+        # 第二个标签页：UI元素详情
+        elements_tab = QWidget()
+        elements_layout = QVBoxLayout(elements_tab)
+        elements_layout.addWidget(QLabel("检测到的UI元素:"))
+        
+        # UI元素表格
+        self.elements_table = QTableWidget()
+        self.elements_table.setColumnCount(6)
+        self.elements_table.setHorizontalHeaderLabels(['ID', '类型', '描述', '坐标', '文本', '置信度'])
+        
+        # 设置表格列宽
+        header = self.elements_table.horizontalHeader()
+        header.setSectionResizeMode(0, QHeaderView.ResizeMode.ResizeToContents)  # ID列
+        header.setSectionResizeMode(1, QHeaderView.ResizeMode.ResizeToContents)  # 类型列
+        header.setSectionResizeMode(2, QHeaderView.ResizeMode.Stretch)            # 描述列
+        header.setSectionResizeMode(3, QHeaderView.ResizeMode.ResizeToContents)  # 坐标列
+        header.setSectionResizeMode(4, QHeaderView.ResizeMode.ResizeToContents)  # 文本列
+        header.setSectionResizeMode(5, QHeaderView.ResizeMode.ResizeToContents)  # 置信度列
+        
+        elements_layout.addWidget(self.elements_table)
+        
+        # UI元素统计信息
+        self.elements_stats = QLabel("UI元素统计: 暂无数据")
+        elements_layout.addWidget(self.elements_stats)
+        
+        self.tab_widget.addTab(elements_tab, "UI元素详情")
+        
+        layout.addWidget(self.tab_widget)
         
         return panel
     
@@ -226,18 +262,48 @@ class MainWindow(QMainWindow):
         panel.setFrameStyle(QFrame.Shape.StyledPanel)
         layout = QVBoxLayout(panel)
         
-        layout.addWidget(QLabel("当前屏幕截图:"))
+        # 创建分割器来分上下两部分
+        screenshot_splitter = QSplitter(Qt.Orientation.Vertical)
+        layout.addWidget(screenshot_splitter)
+        
+        # 上半部分：原始截图
+        original_frame = QFrame()
+        original_layout = QVBoxLayout(original_frame)
+        original_layout.addWidget(QLabel("当前屏幕截图:"))
         
         self.screenshot_label = QLabel()
         self.screenshot_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.screenshot_label.setStyleSheet("border: 1px solid gray;")
         self.screenshot_label.setText("暂无截图")
-        self.screenshot_label.setMinimumHeight(400)
-        layout.addWidget(self.screenshot_label)
+        self.screenshot_label.setMinimumHeight(200)
+        original_layout.addWidget(self.screenshot_label)
         
         # 截图信息
         self.screenshot_info = QLabel("截图信息: 暂无")
-        layout.addWidget(self.screenshot_info)
+        original_layout.addWidget(self.screenshot_info)
+        
+        screenshot_splitter.addWidget(original_frame)
+        
+        # 下半部分：OmniParser标注截图
+        annotated_frame = QFrame()
+        annotated_layout = QVBoxLayout(annotated_frame)
+        annotated_layout.addWidget(QLabel("OmniParser标注截图:"))
+        
+        self.annotated_screenshot_label = QLabel()
+        self.annotated_screenshot_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.annotated_screenshot_label.setStyleSheet("border: 1px solid blue;")
+        self.annotated_screenshot_label.setText("等待分析结果...")
+        self.annotated_screenshot_label.setMinimumHeight(200)
+        annotated_layout.addWidget(self.annotated_screenshot_label)
+        
+        # 标注截图信息
+        self.annotated_info = QLabel("OmniParser信息: 暂无")
+        annotated_layout.addWidget(self.annotated_info)
+        
+        screenshot_splitter.addWidget(annotated_frame)
+        
+        # 设置分割器比例
+        screenshot_splitter.setSizes([250, 250])
         
         return panel
     
@@ -375,6 +441,29 @@ class MainWindow(QMainWindow):
         if result.reasoning:
             self.result_display.append(f"   分析: {result.reasoning}")
         
+        # 显示标注截图
+        if hasattr(result, 'annotated_screenshot_base64') and result.annotated_screenshot_base64:
+            self.display_annotated_screenshot(result.annotated_screenshot_base64)
+            self.result_display.append(f"   📸 已更新OmniParser标注截图")
+        
+        # 显示UI元素信息
+        if hasattr(result, 'ui_elements') and result.ui_elements:
+            self.result_display.append(f"   🔍 检测到UI元素: {len(result.ui_elements)}个")
+            for elem in result.ui_elements[:5]:  # 只显示前5个元素
+                coords = f"({elem.coordinates[0]:.0f},{elem.coordinates[1]:.0f})" if elem.coordinates and len(elem.coordinates) >= 2 else "未知位置"
+                self.result_display.append(f"     - {elem.type} {coords}: {elem.description[:40]}...")
+            if len(result.ui_elements) > 5:
+                self.result_display.append(f"     ... 还有{len(result.ui_elements)-5}个元素，查看'UI元素详情'标签页获取完整列表")
+            
+            # 更新UI元素表格
+            self.update_elements_table(result.ui_elements)
+            
+            # 更新标注信息
+            self.annotated_info.setText(f"OmniParser信息: 检测到{len(result.ui_elements)}个UI元素")
+            
+            # 自动切换到UI元素详情标签页
+            self.tab_widget.setCurrentIndex(1)
+        
         if result.actions:
             self.result_display.append(f"   计划动作数: {len(result.actions)}")
             for i, action in enumerate(result.actions):
@@ -388,6 +477,85 @@ class MainWindow(QMainWindow):
         
         self.status_label.setText("任务完成")
         self.send_task_btn.setEnabled(True)
+    
+    def display_annotated_screenshot(self, annotated_base64):
+        """显示标注后的截图"""
+        try:
+            import base64
+            import io
+            from PIL import Image
+            
+            # 解码base64图像
+            image_data = base64.b64decode(annotated_base64)
+            image = Image.open(io.BytesIO(image_data))
+            
+            # 缩放图像以适应显示区域
+            display_img = image.resize((500, 300), Image.Resampling.LANCZOS)
+            
+            # 转换为QPixmap显示
+            buffer = io.BytesIO()
+            display_img.save(buffer, format='PNG')
+            pixmap = QPixmap()
+            pixmap.loadFromData(buffer.getvalue())
+            
+            self.annotated_screenshot_label.setPixmap(pixmap)
+            
+        except Exception as e:
+            self.annotated_screenshot_label.setText(f"显示标注截图失败: {str(e)}")
+            print(f"显示标注截图错误: {e}")
+    
+    def update_elements_table(self, ui_elements):
+        """更新UI元素表格"""
+        try:
+            # 设置表格行数
+            self.elements_table.setRowCount(len(ui_elements))
+            
+            # 统计不同类型的元素
+            element_types = {}
+            
+            # 填充表格数据
+            for row, elem in enumerate(ui_elements):
+                # ID
+                self.elements_table.setItem(row, 0, QTableWidgetItem(str(elem.id)))
+                
+                # 类型
+                elem_type = elem.type
+                self.elements_table.setItem(row, 1, QTableWidgetItem(elem_type))
+                element_types[elem_type] = element_types.get(elem_type, 0) + 1
+                
+                # 描述
+                description = elem.description[:100] + "..." if len(elem.description) > 100 else elem.description
+                self.elements_table.setItem(row, 2, QTableWidgetItem(description))
+                
+                # 坐标
+                if elem.coordinates and len(elem.coordinates) >= 2:
+                    if len(elem.coordinates) == 4:
+                        coords_str = f"({elem.coordinates[0]:.0f},{elem.coordinates[1]:.0f}) - ({elem.coordinates[2]:.0f},{elem.coordinates[3]:.0f})"
+                    else:
+                        coords_str = f"({elem.coordinates[0]:.0f},{elem.coordinates[1]:.0f})"
+                else:
+                    coords_str = "未知"
+                self.elements_table.setItem(row, 3, QTableWidgetItem(coords_str))
+                
+                # 文本
+                text = elem.text[:50] + "..." if len(elem.text) > 50 else elem.text
+                self.elements_table.setItem(row, 4, QTableWidgetItem(text))
+                
+                # 置信度
+                confidence_str = f"{elem.confidence:.2f}" if elem.confidence > 0 else "N/A"
+                self.elements_table.setItem(row, 5, QTableWidgetItem(confidence_str))
+            
+            # 更新统计信息
+            stats_text = f"UI元素统计: 总计{len(ui_elements)}个元素"
+            if element_types:
+                type_summary = ", ".join([f"{t}({c}个)" for t, c in element_types.items()])
+                stats_text += f" | 类型分布: {type_summary}"
+            
+            self.elements_stats.setText(stats_text)
+            
+        except Exception as e:
+            self.elements_stats.setText(f"更新UI元素表格失败: {str(e)}")
+            print(f"更新UI元素表格错误: {e}")
     
     def on_task_failed(self, error_msg):
         """任务失败回调"""

@@ -15,3 +15,20 @@ pydantic>=2.5.0
 # Shared dependencies
 aiofiles>=23.2.1
 python-dotenv>=1.0.0
+
+# OmniParser dependencies
+torch
+easyocr
+torchvision
+supervision==0.18.0
+transformers
+ultralytics==8.3.70
+numpy==1.26.4
+opencv-python
+opencv-python-headless
+accelerate
+timm
+einops==0.8.0
+paddlepaddle
+paddleocr
+openai
