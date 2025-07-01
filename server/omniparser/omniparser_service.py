@@ -71,11 +71,22 @@ class OmniParserService:
             raise RuntimeError("OmniParser not initialized")
         
         try:
+            # 获取图片尺寸信息
+            import base64
+            import io
+            from PIL import Image
+            image_data = base64.b64decode(image_base64)
+            image = Image.open(io.BytesIO(image_data))
+            image_size = image.size  # (width, height)
+            
             # 调用OmniParser进行解析
             labeled_img_base64, parsed_content_list = self.omniparser.parse(image_base64)
             
-            # 格式化输出
-            formatted_elements = self._format_parsed_content(parsed_content_list)
+            # 打印调试信息，查看原始数据结构
+            logger.info(f"Raw parsed_content_list sample: {parsed_content_list[:3] if parsed_content_list else 'Empty'}")
+            
+            # 格式化输出，传递图片尺寸
+            formatted_elements = self._format_parsed_content(parsed_content_list, image_size)
             
             logger.debug(f"Parsed {len(formatted_elements)} elements from screen")
             
@@ -85,26 +96,45 @@ class OmniParserService:
             logger.error(f"Failed to parse screen: {str(e)}")
             raise
     
-    def _format_parsed_content(self, parsed_content_list: List) -> List[Dict]:
+    def _format_parsed_content(self, parsed_content_list: List, image_size: Tuple[int, int] = (1280, 720)) -> List[Dict]:
         """
         格式化解析后的内容
         
         Args:
             parsed_content_list: OmniParser输出的原始内容列表
+            image_size: 图片尺寸 (width, height)
             
         Returns:
             List[Dict]: 格式化后的元素列表
         """
         formatted_elements = []
+        screen_width, screen_height = image_size
         
         for i, content in enumerate(parsed_content_list):
             if isinstance(content, dict):
+                # 从OmniParser的输出格式提取信息
+                bbox = content.get('bbox', [])
+                content_text = content.get('content', '')
+                element_type = content.get('type', 'unknown')
+                
+                # 转换bbox格式 (通常是[x1, y1, x2, y2]的相对坐标)
+                if bbox and len(bbox) >= 4:
+                    # 转换为像素坐标
+                    coordinates = [
+                        int(bbox[0] * screen_width),  # x1
+                        int(bbox[1] * screen_height), # y1  
+                        int(bbox[2] * screen_width),  # x2
+                        int(bbox[3] * screen_height)  # y2
+                    ]
+                else:
+                    coordinates = []
+                
                 element = {
                     'id': i,
-                    'type': content.get('type', 'unknown'),
-                    'description': content.get('description', ''),
-                    'coordinates': content.get('coordinates', []),
-                    'text': content.get('text', ''),
+                    'type': element_type,
+                    'description': content_text or f'{element_type.title()} element {i}',
+                    'coordinates': coordinates,
+                    'text': content_text if element_type == 'text' else '',
                     'confidence': content.get('confidence', 0.0)
                 }
             else:
