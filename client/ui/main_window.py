@@ -5,7 +5,7 @@ from PyQt6.QtWidgets import (QApplication, QMainWindow, QVBoxLayout, QHBoxLayout
                             QWidget, QPushButton, QTextEdit, QLabel, QLineEdit, 
                             QTextBrowser, QSplitter, QFrame, QTabWidget, QTableWidget, 
                             QTableWidgetItem, QHeaderView, QScrollArea)
-from PyQt6.QtCore import Qt, QThread, pyqtSignal, QTimer
+from PyQt6.QtCore import Qt, QThread, pyqtSignal, QTimer, QMutex
 from PyQt6.QtGui import QFont, QPixmap
 
 # 添加项目根目录到Python路径
@@ -14,6 +14,77 @@ sys.path.append(project_root)
 
 from client.screenshot.screenshot_manager import ScreenshotManager
 from client.communication.server_client import ServerClient
+
+class ScreenshotWorker(QThread):
+    """专用截图工作线程"""
+    screenshot_ready = pyqtSignal(object, str)  # PIL图像, base64数据
+    screenshot_failed = pyqtSignal(str)  # 错误信息
+    
+    def __init__(self, screenshot_manager):
+        super().__init__()
+        self.screenshot_manager = screenshot_manager
+        self.should_run = True
+        self.mutex = QMutex()
+        self.interval = 5.0  # 默认5秒间隔，减少频率
+        
+    def set_interval(self, seconds: float):
+        """设置截图间隔"""
+        self.mutex.lock()
+        self.interval = max(1.0, seconds)  # 最小1秒间隔
+        self.mutex.unlock()
+    
+    def stop(self):
+        """停止截图线程"""
+        self.should_run = False
+        
+    def run(self):
+        """线程主循环"""
+        while self.should_run:
+            try:
+                # 异步获取截图
+                future = self.screenshot_manager.capture_screen_async()
+                screenshot = future.result(timeout=5.0)  # 5秒超时
+                
+                if screenshot:
+                    # 异步获取base64
+                    base64_future = self.screenshot_manager.capture_screen_to_base64_async()
+                    base64_data = base64_future.result(timeout=5.0)
+                    
+                    if base64_data:
+                        self.screenshot_ready.emit(screenshot, base64_data)
+                    else:
+                        self.screenshot_failed.emit("Base64转换失败")
+                else:
+                    self.screenshot_failed.emit("截图失败")
+                    
+            except Exception as e:
+                self.screenshot_failed.emit(f"截图线程错误: {str(e)}")
+            
+            # 等待下次截图
+            self.msleep(int(self.interval * 1000))
+
+class PerformanceMonitorWorker(QThread):
+    """性能监控线程"""
+    performance_update = pyqtSignal(dict)  # 性能数据
+    
+    def __init__(self, screenshot_manager):
+        super().__init__()
+        self.screenshot_manager = screenshot_manager
+        self.should_run = True
+        
+    def stop(self):
+        self.should_run = False
+        
+    def run(self):
+        """性能监控主循环"""
+        while self.should_run:
+            try:
+                stats = self.screenshot_manager.get_performance_stats()
+                self.performance_update.emit(stats)
+            except Exception as e:
+                print(f"性能监控错误: {e}")
+            
+            self.msleep(10000)  # 每10秒更新一次性能统计
 
 class ConnectWorker(QThread):
     """处理连接的工作线程"""
@@ -73,7 +144,7 @@ class DisconnectWorker(QThread):
             loop.close()
 
 class TaskWorker(QThread):
-    """处理异步任务的工作线程"""
+    """处理异步任务的工作线程（优化版）"""
     task_completed = pyqtSignal(object)  # 任务完成信号
     task_failed = pyqtSignal(str)        # 任务失败信号
     
@@ -84,31 +155,24 @@ class TaskWorker(QThread):
         self.screenshot_base64 = screenshot_base64
     
     def run(self):
-        """在子线程中运行异步任务"""
+        """在子线程中运行异步任务（使用优化的同步方法）"""
         try:
-            # 创建新的事件循环
-            loop = asyncio.new_event_loop()
-            asyncio.set_event_loop(loop)
-            
-            # 在工作线程中创建新的ServerClient
+            # 使用优化的ServerClient
             server_client = ServerClient(self.server_url)
             
-            # 连接并发送任务
-            connected = loop.run_until_complete(server_client.connect())
-            if not connected:
+            # 使用同步连接方法
+            if not server_client.connect_sync():
                 self.task_failed.emit("无法连接到服务端")
                 return
             
-            # 运行异步任务
-            result = loop.run_until_complete(
-                server_client.send_task_for_analysis(
-                    self.text_command, 
-                    self.screenshot_base64
-                )
+            # 使用同步发送任务方法
+            result = server_client.send_task_sync(
+                self.text_command, 
+                self.screenshot_base64
             )
             
             # 断开连接
-            loop.run_until_complete(server_client.disconnect())
+            server_client.disconnect_sync()
             
             if result:
                 self.task_completed.emit(result)
@@ -117,30 +181,41 @@ class TaskWorker(QThread):
                 
         except Exception as e:
             self.task_failed.emit(f"任务执行失败: {str(e)}")
-        finally:
-            loop.close()
 
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("Computer Use Agent - 客户端")
+        self.setWindowTitle("Computer Use Agent - 客户端 (优化版)")
         self.setGeometry(100, 100, 1200, 800)
         
         # 初始化组件
         self.screenshot_manager = ScreenshotManager()
         self.server_client = None  # 在连接时创建
         self.current_screenshot_base64 = None
+        self.current_screenshot_image = None
         
         # 设置UI
         self.setup_ui()
         
-        # 自动截图定时器
-        self.screenshot_timer = QTimer()
-        self.screenshot_timer.timeout.connect(self.auto_capture_screenshot)
-        self.screenshot_timer.start(2000)  # 每2秒自动截图
+        # 启动截图工作线程
+        self.screenshot_worker = ScreenshotWorker(self.screenshot_manager)
+        self.screenshot_worker.screenshot_ready.connect(self.on_screenshot_ready)
+        self.screenshot_worker.screenshot_failed.connect(self.on_screenshot_failed)
+        self.screenshot_worker.start()
         
-        # 初始截图
-        self.capture_screenshot()
+        # 启动性能监控线程
+        self.performance_worker = PerformanceMonitorWorker(self.screenshot_manager)
+        self.performance_worker.performance_update.connect(self.on_performance_update)
+        self.performance_worker.start()
+        
+        # 防抖定时器 - 防止频繁UI更新
+        self.ui_update_timer = QTimer()
+        self.ui_update_timer.setSingleShot(True)
+        self.ui_update_timer.timeout.connect(self.update_screenshot_display)
+        self.pending_screenshot_update = None
+        
+        # 初始截图（异步）
+        self.manual_capture_screenshot()
     
     def setup_ui(self):
         """设置用户界面"""
@@ -175,8 +250,16 @@ class MainWindow(QMainWindow):
         splitter.setSizes([600, 600])
         
         # 状态栏
+        status_layout = QHBoxLayout()
         self.status_label = QLabel("就绪")
-        main_layout.addWidget(self.status_label)
+        self.performance_label = QLabel("性能统计: 等待数据...")
+        status_layout.addWidget(self.status_label)
+        status_layout.addStretch()
+        status_layout.addWidget(self.performance_label)
+        
+        status_widget = QWidget()
+        status_widget.setLayout(status_layout)
+        main_layout.addWidget(status_widget)
     
     def create_left_panel(self) -> QWidget:
         """创建左侧控制面板"""
@@ -204,14 +287,23 @@ class MainWindow(QMainWindow):
         # 按钮区域
         button_layout = QHBoxLayout()
         self.screenshot_btn = QPushButton("手动截图")
-        self.screenshot_btn.clicked.connect(self.capture_screenshot)
+        self.screenshot_btn.clicked.connect(self.manual_capture_screenshot)
         
         self.send_task_btn = QPushButton("发送任务")
         self.send_task_btn.clicked.connect(self.send_task)
         self.send_task_btn.setEnabled(True)  # 现在任务工作线程会自己连接
         
+        # 性能控制按钮
+        self.performance_btn = QPushButton("性能统计")
+        self.performance_btn.clicked.connect(self.show_performance_stats)
+        
+        self.clear_cache_btn = QPushButton("清理缓存")
+        self.clear_cache_btn.clicked.connect(self.clear_cache)
+        
         button_layout.addWidget(self.screenshot_btn)
         button_layout.addWidget(self.send_task_btn)
+        button_layout.addWidget(self.performance_btn)
+        button_layout.addWidget(self.clear_cache_btn)
         layout.addLayout(button_layout)
         
         # 创建标签页面板
@@ -357,46 +449,82 @@ class MainWindow(QMainWindow):
         self.result_display.append("🔌 已断开服务端连接")
         self.connect_btn.setEnabled(True)
     
-    def capture_screenshot(self):
-        """捕获屏幕截图"""
-        try:
-            # 获取base64截图
-            self.current_screenshot_base64 = self.screenshot_manager.capture_screen_to_base64()
-            
-            if self.current_screenshot_base64:
-                # 同时获取PIL图像用于显示
-                screenshot_img = self.screenshot_manager.capture_screen()
-                if screenshot_img:
-                    # 缩放图像以适应显示
-                    from PIL import Image
-                    display_img = screenshot_img.resize((500, 300), Image.Resampling.LANCZOS)
-                    
-                    # 转换为QPixmap显示
-                    import io
-                    
-                    buffer = io.BytesIO()
-                    display_img.save(buffer, format='PNG')
-                    pixmap = QPixmap()
-                    pixmap.loadFromData(buffer.getvalue())
-                    
-                    self.screenshot_label.setPixmap(pixmap)
-                    self.screenshot_info.setText(f"截图尺寸: {screenshot_img.size}, Base64长度: {len(self.current_screenshot_base64)}")
-                    
-                self.status_label.setText("截图已更新")
-            else:
-                self.screenshot_label.setText("截图失败")
-                self.status_label.setText("截图失败")
-                
-        except Exception as e:
-            self.result_display.append(f"❌ 截图错误: {str(e)}")
-            self.status_label.setText("截图错误")
+    def on_screenshot_ready(self, screenshot_image, base64_data):
+        """截图准备就绪的回调（在截图线程中调用）"""
+        self.current_screenshot_base64 = base64_data
+        self.current_screenshot_image = screenshot_image
+        
+        # 使用防抖机制更新UI
+        self.pending_screenshot_update = (screenshot_image, base64_data)
+        if not self.ui_update_timer.isActive():
+            self.ui_update_timer.start(100)  # 100ms防抖延迟
     
-    def auto_capture_screenshot(self):
-        """自动截图（静默）"""
+    def on_screenshot_failed(self, error_msg):
+        """截图失败的回调"""
+        self.status_label.setText(f"截图失败: {error_msg}")
+    
+    def on_performance_update(self, stats):
+        """性能统计更新回调"""
+        cache_hit_rate = stats.get('cache_hit_rate', 0)
+        total_screenshots = stats.get('total_screenshots', 0)
+        avg_time = stats.get('avg_capture_time', 0)
+        
+        # 更新状态栏显示性能信息
+        perf_info = f"截图总数: {total_screenshots}, 缓存命中率: {cache_hit_rate:.1f}%, 平均耗时: {avg_time:.3f}s"
+        if hasattr(self, 'performance_label'):
+            self.performance_label.setText(perf_info)
+    
+    def update_screenshot_display(self):
+        """更新截图显示（防抖后执行）"""
+        if not self.pending_screenshot_update:
+            return
+            
+        screenshot_image, base64_data = self.pending_screenshot_update
+        self.pending_screenshot_update = None
+        
         try:
-            self.current_screenshot_base64 = self.screenshot_manager.capture_screen_to_base64()
-        except:
-            pass  # 静默处理错误
+            # 缩放图像以适应显示
+            from PIL import Image
+            display_img = screenshot_image.resize((500, 300), Image.Resampling.LANCZOS)
+            
+            # 转换为QPixmap显示
+            import io
+            buffer = io.BytesIO()
+            display_img.save(buffer, format='PNG')
+            pixmap = QPixmap()
+            pixmap.loadFromData(buffer.getvalue())
+            
+            self.screenshot_label.setPixmap(pixmap)
+            self.screenshot_info.setText(f"截图尺寸: {screenshot_image.size}, Base64长度: {len(base64_data)}")
+            
+            # 清理临时对象
+            del display_img
+            buffer.close()
+            
+            self.status_label.setText("截图已更新")
+            
+        except Exception as e:
+            self.screenshot_label.setText(f"显示截图失败: {str(e)}")
+            self.status_label.setText("截图显示错误")
+    
+    def manual_capture_screenshot(self):
+        """手动触发截图（立即执行）"""
+        self.status_label.setText("正在截图...")
+        
+        # 在线程池中异步执行
+        future = self.screenshot_manager.capture_screen_to_base64_async(
+            callback=lambda result: self.on_manual_screenshot_ready(result)
+        )
+    
+    def on_manual_screenshot_ready(self, base64_data):
+        """手动截图完成回调"""
+        if base64_data:
+            self.current_screenshot_base64 = base64_data
+            # 同时获取图像用于显示
+            screenshot_img = self.screenshot_manager.capture_screen()
+            if screenshot_img:
+                self.current_screenshot_image = screenshot_img
+                self.on_screenshot_ready(screenshot_img, base64_data)
     
     def send_task(self):
         """发送任务到服务端"""
@@ -562,6 +690,67 @@ class MainWindow(QMainWindow):
         self.result_display.append(f"❌ 任务失败: {error_msg}")
         self.status_label.setText("任务失败")
         self.send_task_btn.setEnabled(True)
+    
+    def show_performance_stats(self):
+        """显示详细性能统计"""
+        stats = self.screenshot_manager.get_performance_stats()
+        
+        stats_text = f"""
+=== 性能统计报告 ===
+总截图次数: {stats.get('total_screenshots', 0)}
+缓存命中次数: {stats.get('cache_hits', 0)}
+缓存命中率: {stats.get('cache_hit_rate', 0):.2f}%
+平均截图耗时: {stats.get('avg_capture_time', 0):.3f}秒
+
+=== 缓存状态 ===
+图像缓存数量: {stats.get('image_cache_size', 0)}
+Base64缓存数量: {stats.get('base64_cache_size', 0)}
+
+=== 线程状态 ===
+截图线程运行: {'是' if self.screenshot_worker.isRunning() else '否'}
+性能监控线程运行: {'是' if self.performance_worker.isRunning() else '否'}
+截图间隔: {self.screenshot_worker.interval}秒
+        """
+        
+        self.result_display.append("📊 性能统计:")
+        self.result_display.append(stats_text)
+    
+    def clear_cache(self):
+        """清理缓存"""
+        try:
+            self.screenshot_manager.clear_cache()
+            self.result_display.append("🧹 缓存已清理")
+            self.status_label.setText("缓存已清理")
+        except Exception as e:
+            self.result_display.append(f"❌ 清理缓存失败: {str(e)}")
+    
+    def closeEvent(self, event):
+        """窗口关闭事件 - 清理资源"""
+        try:
+            # 停止工作线程
+            if hasattr(self, 'screenshot_worker'):
+                self.screenshot_worker.stop()
+                self.screenshot_worker.wait(5000)  # 等待5秒
+            
+            if hasattr(self, 'performance_worker'):
+                self.performance_worker.stop()
+                self.performance_worker.wait(5000)
+            
+            # 关闭截图管理器
+            if hasattr(self, 'screenshot_manager'):
+                self.screenshot_manager.shutdown()
+            
+            # 断开服务端连接
+            if self.server_client and self.server_client.connected:
+                self.server_client.disconnect_sync()
+            
+            # 关闭所有ServerClient连接
+            ServerClient.shutdown_all()
+                
+        except Exception as e:
+            print(f"清理资源时出错: {e}")
+        
+        event.accept()
 
 def main():
     app = QApplication(sys.argv)
