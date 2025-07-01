@@ -14,7 +14,7 @@ from typing import Dict, List, Optional, Tuple
 from PIL import Image
 import io
 
-from shared.schemas.data_models import ActionPlan, UIElement
+from shared.schemas.data_models import ActionPlan, UIElement, OSInfo
 
 logger = logging.getLogger(__name__)
 
@@ -45,7 +45,7 @@ class ClaudeService:
         screenshot_base64: str, 
         ui_elements: List[UIElement],
         annotated_screenshot_base64: Optional[str] = None,
-        os_info: Optional[Dict] = None
+        os_info: Optional[OSInfo] = None
     ) -> Tuple[List[ActionPlan], str, float]:
         """
         使用Claude分析任务并生成pyautogui操作指令
@@ -112,7 +112,7 @@ class ClaudeService:
             logger.error(f"Failed to save image: {str(e)}")
             raise
     
-    def _build_analysis_prompt(self, text_command: str, ui_elements: List[UIElement], os_info: Optional[Dict] = None) -> str:
+    def _build_analysis_prompt(self, text_command: str, ui_elements: List[UIElement], os_info: Optional[OSInfo] = None) -> str:
         """
         构建Claude分析提示
         
@@ -138,8 +138,8 @@ class ClaudeService:
         # 构建操作系统信息
         os_text = "未知"
         if os_info:
-            system = os_info.get('system', '未知')
-            version = os_info.get('version', '未知')
+            system = getattr(os_info, 'system', '未知')
+            version = getattr(os_info, 'version', '未知')
             os_text = f"{system} {version}"
         
         prompt = f"""请分析这个计算机屏幕截图和用户指令，生成详细的pyautogui操作步骤。
