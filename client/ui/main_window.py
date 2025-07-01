@@ -956,45 +956,11 @@ class MainWindow(QMainWindow):
         self.status_label.setText("任务失败")
         self.send_task_btn.setEnabled(True)
     
-    def show_performance_stats(self):
-        """显示详细性能统计"""
-        stats = self.screenshot_manager.get_performance_stats()
-        
-        stats_text = f"""
-=== 性能统计报告 ===
-总截图次数: {stats.get('total_screenshots', 0)}
-缓存命中次数: {stats.get('cache_hits', 0)}
-缓存命中率: {stats.get('cache_hit_rate', 0):.2f}%
-平均截图耗时: {stats.get('avg_capture_time', 0):.3f}秒
-
-=== 缓存状态 ===
-图像缓存数量: {stats.get('image_cache_size', 0)}
-Base64缓存数量: {stats.get('base64_cache_size', 0)}
-
-=== 线程状态 ===
-截图线程运行: {'是' if self.screenshot_worker.isRunning() else '否'}
-性能监控线程运行: {'是' if self.performance_worker.isRunning() else '否'}
-截图间隔: {self.screenshot_worker.interval}秒
-        """
-        
-        self.result_display.append("📊 性能统计:")
-        self.result_display.append(stats_text)
-    
-    def clear_cache(self):
-        """清理缓存"""
-        try:
-            self.screenshot_manager.clear_cache()
-            self.result_display.append("🧹 缓存已清理")
-            self.status_label.setText("缓存已清理")
-        except Exception as e:
-            self.result_display.append(f"❌ 清理缓存失败: {str(e)}")
     
     def _connect_execution_signals(self):
         """连接执行管理器信号"""
         self.execution_manager.execution_started.connect(self._on_execution_started)
         self.execution_manager.execution_completed.connect(self._on_execution_completed)
-        self.execution_manager.execution_paused.connect(self._on_execution_paused)
-        self.execution_manager.execution_resumed.connect(self._on_execution_resumed)
         self.execution_manager.execution_stopped.connect(self._on_execution_stopped)
         self.execution_manager.action_started.connect(self._on_action_started)
         self.execution_manager.action_completed.connect(self._on_action_completed)
