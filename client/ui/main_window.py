@@ -176,6 +176,7 @@ class TaskWorker(QThread):
         import websockets
         import json
         import uuid
+        import time
         
         try:
             # 连接WebSocket
@@ -253,10 +254,7 @@ class MainWindow(QMainWindow):
         self.performance_worker.performance_update.connect(self.on_performance_update)
         self.performance_worker.start()
         
-        # 防抖定时器 - 防止频繁UI更新
-        self.ui_update_timer = QTimer()
-        self.ui_update_timer.setSingleShot(True)
-        self.ui_update_timer.timeout.connect(self.update_screenshot_display)
+        # 用于缓存待更新的截图数据
         self.pending_screenshot_update = None
         
         # 初始截图（异步）
@@ -530,8 +528,8 @@ class MainWindow(QMainWindow):
         
         # 使用防抖机制更新UI
         self.pending_screenshot_update = (screenshot_image, base64_data)
-        if not self.ui_update_timer.isActive():
-            self.ui_update_timer.start(100)  # 100ms防抖延迟
+        # 使用QTimer.singleShot在主线程中延迟执行UI更新
+        QTimer.singleShot(100, self.update_screenshot_display)
     
     def on_screenshot_failed(self, error_msg):
         """截图失败的回调"""
