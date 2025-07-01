@@ -14,9 +14,46 @@ from typing import Dict, List, Optional, Tuple
 from PIL import Image
 import io
 
-from shared.schemas.data_models import ActionPlan, UIElement, OSInfo
+from shared.schemas.data_models import ActionPlan, UIElement, OSInfo, CompletionVerificationRequest, CompletionVerificationResponse, CompletionStatus
 
 logger = logging.getLogger(__name__)
+
+class TaskMemory:
+    """任务记忆模块 - 存储任务上下文信息"""
+    
+    def __init__(self):
+        self.task_contexts: Dict[str, Dict] = {}
+    
+    def save_task_context(self, task_id: str, original_command: str, actions: List[ActionPlan], reasoning: str):
+        """保存任务上下文"""
+        self.task_contexts[task_id] = {
+            'original_command': original_command,
+            'actions': actions,
+            'reasoning': reasoning,
+            'created_at': time.time()
+        }
+        logger.info(f"Saved context for task {task_id}")
+    
+    def get_task_context(self, task_id: str) -> Optional[Dict]:
+        """获取任务上下文"""
+        return self.task_contexts.get(task_id)
+    
+    def clear_old_contexts(self, max_age_hours: int = 24):
+        """清理超过指定时间的上下文"""
+        current_time = time.time()
+        max_age_seconds = max_age_hours * 3600
+        
+        expired_tasks = [
+            task_id for task_id, context in self.task_contexts.items()
+            if current_time - context['created_at'] > max_age_seconds
+        ]
+        
+        for task_id in expired_tasks:
+            del self.task_contexts[task_id]
+            logger.debug(f"Cleared expired context for task {task_id}")
+        
+        if expired_tasks:
+            logger.info(f"Cleared {len(expired_tasks)} expired task contexts")
 
 class ClaudeService:
     """Claude服务类，提供智能任务分析和操作指令生成功能"""
@@ -33,6 +70,9 @@ class ClaudeService:
         self.img_dir = "/root/autodl-tmp/computer-use-agent/server/claude/img"
         os.makedirs(self.img_dir, exist_ok=True)
         
+        # 初始化记忆模块
+        self.memory = TaskMemory()
+        
         # 重试配置
         self.max_retries = self.config.get('max_retries', 3)
         self.retry_delay = self.config.get('retry_delay', 2.0)
@@ -45,7 +85,8 @@ class ClaudeService:
         screenshot_base64: str, 
         ui_elements: List[UIElement],
         annotated_screenshot_base64: Optional[str] = None,
-        os_info: Optional[OSInfo] = None
+        os_info: Optional[OSInfo] = None,
+        task_id: Optional[str] = None
     ) -> Tuple[List[ActionPlan], str, float]:
         """
         使用Claude分析任务并生成pyautogui操作指令
@@ -55,6 +96,8 @@ class ClaudeService:
             screenshot_base64: 原始截图的base64编码
             ui_elements: 检测到的UI元素列表
             annotated_screenshot_base64: 标注后的截图base64编码（可选）
+            os_info: 操作系统信息
+            task_id: 任务ID，用于记忆管理
             
         Returns:
             Tuple[List[ActionPlan], str, float]: (操作计划列表, 推理过程, 置信度)
@@ -74,6 +117,10 @@ class ClaudeService:
             
             # 解析Claude响应
             actions, reasoning, confidence = self._parse_claude_response(claude_response, ui_elements)
+            
+            # 保存到记忆模块
+            if task_id:
+                self.memory.save_task_context(task_id, text_command, actions, reasoning)
             
             return actions, reasoning, confidence
             
@@ -170,6 +217,89 @@ class ClaudeService:
         except Exception as e:
             logger.error(f"Claude task completion verification with base64 failed: {str(e)}")
             raise
+    
+    def verify_completion_simple(self, task_id: str, screenshot_base64: str) -> CompletionVerificationResponse:
+        """
+        简化的任务完成验证接口 - 使用记忆模块获取上下文
+        
+        Args:
+            task_id: 任务ID
+            screenshot_base64: 当前截图的base64数据
+            
+        Returns:
+            CompletionVerificationResponse: 验证响应
+        """
+        start_time = time.time()
+        
+        try:
+            # 从记忆模块获取任务上下文
+            task_context = self.memory.get_task_context(task_id)
+            if not task_context:
+                logger.warning(f"No context found for task {task_id}")
+                return CompletionVerificationResponse(
+                    task_id=task_id,
+                    status=CompletionStatus.UNCLEAR,
+                    reasoning="无法找到任务上下文信息",
+                    confidence=0.0,
+                    next_steps="请重新执行任务分析",
+                    verification_time=time.time() - start_time
+                )
+            
+            original_command = task_context['original_command']
+            previous_reasoning = task_context['reasoning']
+            
+            # 构建验证提示，包含上下文信息
+            prompt = self._build_memory_based_verification_prompt(
+                original_command, 
+                previous_reasoning,
+                task_context
+            )
+            
+            # 保存截图用于分析
+            timestamp = int(time.time())
+            temp_filename = f"verification_{task_id}_{timestamp}.png"
+            temp_filepath = self._save_image_from_base64(screenshot_base64, temp_filename)
+            
+            try:
+                # 执行Claude命令
+                claude_response = self._execute_claude_command_with_retry(prompt, temp_filepath)
+                
+                # 解析响应
+                status, reasoning, confidence = self._parse_completion_response(claude_response)
+                
+                # 提取next_steps
+                next_steps = self._extract_next_steps_from_response(claude_response, status)
+                
+                verification_time = time.time() - start_time
+                
+                return CompletionVerificationResponse(
+                    task_id=task_id,
+                    status=CompletionStatus(status),
+                    reasoning=reasoning,
+                    confidence=confidence,
+                    next_steps=next_steps,
+                    verification_time=verification_time
+                )
+                
+            finally:
+                # 清理临时文件
+                try:
+                    if os.path.exists(temp_filepath):
+                        os.remove(temp_filepath)
+                        logger.debug(f"Cleaned up temp file: {temp_filepath}")
+                except Exception as cleanup_error:
+                    logger.warning(f"Failed to cleanup temp file {temp_filepath}: {cleanup_error}")
+                    
+        except Exception as e:
+            logger.error(f"Simple completion verification failed for task {task_id}: {str(e)}")
+            return CompletionVerificationResponse(
+                task_id=task_id,
+                status=CompletionStatus.UNCLEAR,
+                reasoning=f"验证过程出错: {str(e)}",
+                confidence=0.0,
+                next_steps="请检查系统状态后重试",
+                verification_time=time.time() - start_time
+            )
     
     def _save_image_from_base64(self, image_base64: str, filename: str) -> str:
         """
@@ -339,6 +469,75 @@ JSON格式要求:
 4. confidence值必须在0.0到1.0之间
 
 请基于当前屏幕截图进行客观、准确的判断。"""
+
+        return prompt
+    
+    def _build_memory_based_verification_prompt(self, original_command: str, previous_reasoning: str, task_context: Dict) -> str:
+        """
+        基于记忆模块构建验证提示
+        
+        Args:
+            original_command: 原始用户指令
+            previous_reasoning: 之前的推理过程
+            task_context: 任务上下文
+            
+        Returns:
+            str: 验证提示
+        """
+        actions = task_context.get('actions', [])
+        actions_summary = []
+        
+        for i, action in enumerate(actions[:5]):  # 只显示前5个操作
+            action_desc = f"{i+1}. {action.type}"
+            if hasattr(action, 'description') and action.description:
+                action_desc += f": {action.description}"
+            actions_summary.append(action_desc)
+        
+        actions_text = "\n".join(actions_summary) if actions_summary else "无操作记录"
+        if len(actions) > 5:
+            actions_text += f"\n... (共{len(actions)}个操作)"
+        
+        prompt = f"""你是一个智能计算机操作助手，正在验证任务执行结果。你有这个任务的完整上下文信息。
+
+**原始用户指令:**
+{original_command}
+
+**之前的分析推理:**
+{previous_reasoning}
+
+**计划执行的操作:**
+{actions_text}
+
+**当前屏幕状态:**
+请分析当前提供的屏幕截图。
+
+**任务验证要求:**
+1. 请仔细对比原始用户指令和当前屏幕状态
+2. 判断用户的原始需求是否已经得到满足
+3. 考虑计划的操作是否成功执行并产生了预期结果
+4. 如果任务未完成，分析还需要什么操作
+
+请严格按照以下JSON格式回复，不要添加任何额外的文本或注释:
+{{
+    "status": "completed",
+    "confidence": 0.9,
+    "reasoning": "详细说明你的判断理由，包括对屏幕状态的分析，不要使用双引号",
+    "next_steps": "如果未完成，请描述建议的下一步操作；如果已完成，设为null"
+}}
+
+**状态值说明:**
+- completed: 用户的原始需求已经完全满足
+- incomplete: 部分完成但还需要继续操作
+- failed: 操作失败或结果不符合预期
+- unclear: 无法从当前信息判断任务状态
+
+**JSON格式要求:**
+1. 只输出JSON，不要添加任何说明文字或markdown标记
+2. reasoning和next_steps字段中不要使用双引号，用单引号或中文标点
+3. 确保JSON格式完全有效
+4. confidence值必须在0.0到1.0之间
+
+请基于任务上下文和当前屏幕截图进行客观、准确的判断。"""
 
         return prompt
     
@@ -610,6 +809,50 @@ JSON格式要求:
             return "failed", "基于文本分析：任务执行失败", 0.6
         else:
             return "unclear", f"无法从文本中确定状态: {response[:100]}...", 0.3
+    
+    def _extract_next_steps_from_response(self, response: str, status: str) -> Optional[str]:
+        """
+        从Claude响应中提取next_steps信息
+        
+        Args:
+            response: Claude响应文本
+            status: 任务状态
+            
+        Returns:
+            Optional[str]: 下一步操作建议
+        """
+        try:
+            # 如果任务已完成，不需要下一步操作
+            if status == "completed":
+                return None
+                
+            # 尝试从JSON中提取next_steps
+            json_start = response.find('{')
+            json_end = response.rfind('}') + 1
+            
+            if json_start >= 0 and json_end > json_start:
+                json_str = response[json_start:json_end]
+                response_data = json.loads(json_str)
+                next_steps = response_data.get("next_steps")
+                
+                # 如果next_steps为null或空字符串，返回None
+                if next_steps in [None, "null", ""]:
+                    return None
+                    
+                return next_steps
+            
+        except Exception as e:
+            logger.debug(f"Failed to extract next_steps from JSON: {e}")
+        
+        # 降级处理：根据状态提供默认建议
+        if status == "incomplete":
+            return "请继续执行剩余操作或检查当前操作结果"
+        elif status == "failed":
+            return "请检查操作是否正确，必要时重新执行任务"
+        elif status == "unclear":
+            return "请检查当前屏幕状态，确认任务执行情况"
+        
+        return None
     
     def _create_text_based_actions(self, response: str) -> List[ActionPlan]:
         """

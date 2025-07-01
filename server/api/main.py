@@ -11,7 +11,8 @@ sys.path.append(project_root)
 
 from shared.schemas.data_models import (
     TaskAnalysisRequest, TaskAnalysisResponse, ActionPlan, UIElement,
-    OmniParserResult, ClaudeAnalysisResult
+    OmniParserResult, ClaudeAnalysisResult, MessageType,
+    CompletionVerificationRequest, CompletionVerificationResponse
 )
 
 app = FastAPI(title="Computer Use Agent Server", version="1.0.0")
@@ -93,8 +94,12 @@ async def websocket_endpoint(websocket: WebSocket):
                 response = await handle_task_analysis(message, websocket)
                 await websocket.send_text(json.dumps(response))
             elif message.get("type") == "verify_task_completion":
-                # 处理任务完成度验证请求
+                # 处理任务完成度验证请求（旧版本兼容）
                 response = await handle_task_completion_verification(message, websocket)
+                await websocket.send_text(json.dumps(response))
+            elif message.get("type") == MessageType.VERIFY_COMPLETION:
+                # 处理简化的任务完成验证请求
+                response = await handle_simple_completion_verification(message, websocket)
                 await websocket.send_text(json.dumps(response))
             else:
                 # 未知消息类型
@@ -183,7 +188,8 @@ async def handle_task_analysis(message: dict, websocket: WebSocket) -> dict:
                     request.screenshot_base64,
                     ui_elements,
                     annotated_screenshot,
-                    request.os_info
+                    request.os_info,
+                    task_id  # 传递task_id给记忆模块
                 )
                 
                 claude_processing_time = time.time() - claude_start_time
@@ -329,6 +335,78 @@ async def handle_task_completion_verification(message: dict, websocket: WebSocke
             "task_id": message.get("task_id", "unknown"),
             "timestamp": time.time(),
             "message": f"任务完成度验证失败: {str(e)}"
+        }
+
+async def handle_simple_completion_verification(message: dict, websocket: WebSocket) -> dict:
+    """处理简化的任务完成验证请求"""
+    try:
+        # 解析请求数据
+        verification_data = message["data"]
+        request = CompletionVerificationRequest(**verification_data)
+        task_id = message["task_id"]
+        
+        print(f"处理简化任务完成度验证: {task_id}")
+        
+        # 使用Claude服务的简化验证接口
+        if claude_service:
+            try:
+                print("🔍 使用简化接口验证任务完成度...")
+                verification_result = claude_service.verify_completion_simple(
+                    task_id, 
+                    request.screenshot_base64
+                )
+                
+                print(f"✅ 简化验证结果: {verification_result.status} (置信度: {verification_result.confidence:.2f})")
+                
+                return {
+                    "type": MessageType.COMPLETION_RESULT,
+                    "task_id": task_id,
+                    "timestamp": time.time(),
+                    "data": verification_result.model_dump()
+                }
+                
+            except Exception as e:
+                print(f"⚠️ 简化验证失败: {e}")
+                error_result = CompletionVerificationResponse(
+                    task_id=task_id,
+                    status="unclear",
+                    reasoning=f"验证过程发生异常: {str(e)}",
+                    confidence=0.0,
+                    next_steps="请检查系统状态后重试",
+                    verification_time=0.0
+                )
+                
+                return {
+                    "type": MessageType.COMPLETION_RESULT,
+                    "task_id": task_id,
+                    "timestamp": time.time(),
+                    "data": error_result.model_dump()
+                }
+        else:
+            print("📝 Claude服务不可用，使用模拟验证...")
+            mock_result = CompletionVerificationResponse(
+                task_id=task_id,
+                status="unclear",
+                reasoning="Claude服务不可用，无法进行智能验证",
+                confidence=0.0,
+                next_steps="请确保Claude服务正常运行",
+                verification_time=0.0
+            )
+            
+            return {
+                "type": MessageType.COMPLETION_RESULT,
+                "task_id": task_id,
+                "timestamp": time.time(),
+                "data": mock_result.model_dump()
+            }
+        
+    except Exception as e:
+        print(f"简化任务完成度验证失败: {e}")
+        return {
+            "type": "error",
+            "task_id": message.get("task_id", "unknown"),
+            "timestamp": time.time(),
+            "message": f"简化任务完成度验证失败: {str(e)}"
         }
 
 def simulate_ai_analysis(task_id: str, request: TaskAnalysisRequest, ui_elements: list = None) -> TaskAnalysisResponse:

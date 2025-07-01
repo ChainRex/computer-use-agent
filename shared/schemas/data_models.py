@@ -7,6 +7,8 @@ class MessageType(str, Enum):
     ANALYSIS_RESULT = "analysis_result"
     OMNIPARSER_RESULT = "omniparser_result"  # OmniParser中间结果
     CLAUDE_RESULT = "claude_result"  # Claude分析结果
+    VERIFY_COMPLETION = "verify_completion"  # 简化的任务完成验证
+    COMPLETION_RESULT = "completion_result"  # 验证结果
     ERROR = "error"
 
 class OSInfo(BaseModel):
@@ -118,3 +120,24 @@ class TaskAnalysisResponse(BaseModel):
     # OmniParser相关字段
     ui_elements: Optional[List[UIElement]] = None
     annotated_screenshot_base64: Optional[str] = None
+
+class CompletionVerificationRequest(BaseModel):
+    """简化的任务完成验证请求 - 只需要截图"""
+    task_id: str
+    screenshot_base64: str
+
+class CompletionStatus(str, Enum):
+    """任务完成状态"""
+    COMPLETED = "completed"
+    INCOMPLETE = "incomplete" 
+    FAILED = "failed"
+    UNCLEAR = "unclear"
+
+class CompletionVerificationResponse(BaseModel):
+    """任务完成验证响应"""
+    task_id: str
+    status: CompletionStatus
+    reasoning: str
+    confidence: float  # 0.0-1.0
+    next_steps: Optional[str] = None  # 如果未完成，建议的下一步操作
+    verification_time: Optional[float] = None

@@ -15,6 +15,7 @@ project_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(_
 sys.path.append(project_root)
 
 from client.screenshot.screenshot_manager import ScreenshotManager
+from shared.schemas.data_models import CompletionVerificationRequest, CompletionVerificationResponse, CompletionStatus
 
 logger = logging.getLogger(__name__)
 
@@ -215,6 +216,111 @@ class TaskCompletionChecker:
             
         except (json.JSONDecodeError, KeyError, ValueError) as e:
             logger.error(f"解析Claude响应失败: {e}")
+            return CompletionCheckResult(
+                task_id=task_id,
+                status=TaskStatus.UNCLEAR,
+                confidence=0.0,
+                reasoning=f"响应解析失败: {str(e)}",
+                next_steps="请重新检查任务状态",
+                check_time=check_time
+            )
+    
+    def check_task_completion_simple(self, task_id: str) -> CompletionCheckResult:
+        """
+        简化的任务完成度检查 - 只需要任务ID和截图
+        使用新的简化接口，通过记忆模块获取上下文
+        
+        Args:
+            task_id: 任务ID
+            
+        Returns:
+            CompletionCheckResult: 检查结果
+        """
+        start_time = time.time()
+        
+        try:
+            # 1. 捕获当前屏幕截图
+            logger.info("正在捕获完成验证截图...")
+            screenshot_base64 = self.screenshot_manager.capture_screen_to_base64()
+            
+            if not screenshot_base64:
+                logger.error("截图失败，无法进行任务完成度验证")
+                return CompletionCheckResult(
+                    task_id=task_id,
+                    status=TaskStatus.UNCLEAR,
+                    confidence=0.0,
+                    reasoning="截图失败，无法验证任务完成状态",
+                    next_steps="请手动检查任务执行结果",
+                    check_time=time.time() - start_time
+                )
+            
+            # 2. 创建简化的验证请求
+            verification_request = CompletionVerificationRequest(
+                task_id=task_id,
+                screenshot_base64=screenshot_base64
+            )
+            
+            # 3. 返回包含截图数据的结果，等待服务端处理
+            return CompletionCheckResult(
+                task_id=task_id,
+                status=TaskStatus.UNCLEAR,  # 初始状态，等待服务端分析
+                confidence=0.0,
+                reasoning="等待简化接口分析任务完成状态...",
+                next_steps=None,
+                screenshot_path=None,
+                screenshot_base64=screenshot_base64,
+                verification_prompt=None,  # 简化接口不需要提示词
+                check_time=time.time() - start_time
+            )
+            
+        except Exception as e:
+            logger.error(f"简化任务完成度检查失败: {e}")
+            return CompletionCheckResult(
+                task_id=task_id,
+                status=TaskStatus.FAILED,
+                confidence=0.0,
+                reasoning=f"检查过程发生异常: {str(e)}",
+                next_steps="请手动检查任务执行结果",
+                check_time=time.time() - start_time
+            )
+    
+    def parse_simple_completion_response(self, response: CompletionVerificationResponse, 
+                                       task_id: str, check_time: float) -> CompletionCheckResult:
+        """
+        解析简化验证接口的响应
+        
+        Args:
+            response: 服务端返回的验证响应
+            task_id: 任务ID
+            check_time: 检查耗时
+            
+        Returns:
+            CompletionCheckResult: 解析后的检查结果
+        """
+        try:
+            # 将CompletionStatus转换为TaskStatus
+            status_map = {
+                CompletionStatus.COMPLETED: TaskStatus.COMPLETED,
+                CompletionStatus.INCOMPLETE: TaskStatus.INCOMPLETE,
+                CompletionStatus.FAILED: TaskStatus.FAILED,
+                CompletionStatus.UNCLEAR: TaskStatus.UNCLEAR
+            }
+            
+            status = status_map.get(response.status, TaskStatus.UNCLEAR)
+            
+            logger.info(f"任务 {task_id} 简化验证结果: {status.value}, 置信度: {response.confidence:.2f}")
+            
+            return CompletionCheckResult(
+                task_id=task_id,
+                status=status,
+                confidence=response.confidence,
+                reasoning=response.reasoning,
+                next_steps=response.next_steps,
+                check_time=check_time + (response.verification_time or 0.0)
+            )
+            
+        except Exception as e:
+            logger.error(f"解析简化验证响应失败: {e}")
             return CompletionCheckResult(
                 task_id=task_id,
                 status=TaskStatus.UNCLEAR,
