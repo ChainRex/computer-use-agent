@@ -242,6 +242,87 @@ class TaskWorker(QThread):
         except Exception as e:
             self.task_failed.emit(f"连接失败: {str(e)}")
 
+class TaskCompletionVerificationWorker(QThread):
+    """任务完成度验证工作线程"""
+    verification_completed = pyqtSignal(object)  # 验证完成信号
+    verification_failed = pyqtSignal(str)        # 验证失败信号
+    
+    def __init__(self, server_url, task_id, original_command, previous_claude_output, verification_screenshot_path):
+        super().__init__()
+        self.server_url = server_url
+        self.task_id = task_id
+        self.original_command = original_command
+        self.previous_claude_output = previous_claude_output
+        self.verification_screenshot_path = verification_screenshot_path
+    
+    def run(self):
+        """在子线程中运行任务完成度验证"""
+        try:
+            # 创建新的事件循环
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+            
+            # 运行异步验证任务
+            loop.run_until_complete(self._run_async_verification())
+                
+        except Exception as e:
+            self.verification_failed.emit(f"验证执行失败: {str(e)}")
+        finally:
+            loop.close()
+    
+    async def _run_async_verification(self):
+        """异步任务完成度验证"""
+        import sys
+        import os
+        import json
+        import time
+        
+        # 添加客户端目录到路径
+        client_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        if client_dir not in sys.path:
+            sys.path.append(client_dir)
+        
+        try:
+            from websocket_config import WebSocketManager
+            
+            # 使用WebSocket管理器
+            async with WebSocketManager(self.server_url) as ws_manager:
+                # 构建验证请求
+                request = {
+                    "type": "verify_task_completion",
+                    "task_id": self.task_id,
+                    "timestamp": time.time(),
+                    "data": {
+                        "original_command": self.original_command,
+                        "previous_claude_output": self.previous_claude_output,
+                        "verification_screenshot_path": self.verification_screenshot_path
+                    }
+                }
+                
+                # 发送请求
+                await ws_manager.send_message(request)
+                
+                # 接收响应
+                try:
+                    response = await ws_manager.receive_message()
+                    message_type = response.get("type")
+                    
+                    if message_type == "task_completion_result":
+                        self.verification_completed.emit(response)
+                    elif message_type == "error":
+                        self.verification_failed.emit(response.get("message", "服务端验证错误"))
+                    else:
+                        self.verification_failed.emit(f"未知响应类型: {message_type}")
+                        
+                except Exception as e:
+                    if "超时" in str(e):
+                        self.verification_failed.emit(f"验证超时: {str(e)}")
+                    else:
+                        self.verification_failed.emit(f"接收验证响应失败: {str(e)}")
+                        
+        except Exception as e:
+            self.verification_failed.emit(f"连接验证服务失败: {str(e)}")
+
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
@@ -267,6 +348,8 @@ class MainWindow(QMainWindow):
         # 执行相关数据
         self.current_action_plan = []
         self.current_ui_elements = []
+        self.current_task_command = None  # 保存当前任务的原始指令
+        self.current_claude_output = None  # 保存当前Claude输出
         
         # 设置UI
         self.setup_ui()
@@ -628,6 +711,9 @@ class MainWindow(QMainWindow):
             self.result_display.append("❌ 请先截图")
             return
         
+        # 保存当前任务指令
+        self.current_task_command = command
+        
         # TaskWorker现在会自己建立连接，无需预先连接
         # 但我们仍然需要有效的服务端地址
         server_url = self.server_url_input.text().strip()
@@ -847,6 +933,9 @@ class MainWindow(QMainWindow):
                 )
                 self.current_action_plan.append(action)
             
+            # 保存Claude输出用于后续任务完成度验证
+            self.current_claude_output = f"推理过程: {reasoning}\n操作计划: {len(actions)}个步骤"
+            
             # 自动执行操作计划
             if self.current_action_plan:
                 self.claude_display.append(f"\n🚀 <b>操作计划已准备就绪，开始自动执行...</b>")
@@ -967,6 +1056,7 @@ class MainWindow(QMainWindow):
         self.execution_manager.confirmation_requested.connect(self._on_confirmation_requested)
         self.execution_manager.error_occurred.connect(self._on_execution_error)
         self.execution_manager.status_changed.connect(self._on_execution_status_changed)
+        self.execution_manager.task_completion_check_requested.connect(self._on_task_completion_check_requested)
     
     def _auto_execute_action_plan(self):
         """自动执行操作计划（无用户干预）"""
@@ -992,11 +1082,101 @@ class MainWindow(QMainWindow):
         success = self.execution_manager.execute_action_plan(
             self.current_action_plan,
             self.current_ui_elements,
-            f"auto_task_{int(time.time())}"
+            f"auto_task_{int(time.time())}",
+            self.current_task_command,
+            self.current_claude_output
         )
         
         if not success:
             self.result_display.append("❌ 自动执行启动失败")
+    
+    def _on_task_completion_check_requested(self, task_id, original_command, previous_claude_output):
+        """任务完成度验证请求处理"""
+        try:
+            # 使用任务完成度检查器进行验证
+            from client.automation.task_completion_checker import TaskCompletionChecker
+            checker = TaskCompletionChecker()
+            
+            # 检查任务完成度
+            check_result = checker.check_task_completion(
+                task_id, 
+                original_command, 
+                previous_claude_output
+            )
+            
+            if check_result.screenshot_path:
+                # 启动任务完成度验证工作线程
+                self.verification_worker = TaskCompletionVerificationWorker(
+                    self.server_url_input.text(),
+                    task_id,
+                    original_command,
+                    previous_claude_output,
+                    check_result.screenshot_path
+                )
+                
+                self.verification_worker.verification_completed.connect(self._on_verification_completed)
+                self.verification_worker.verification_failed.connect(self._on_verification_failed)
+                self.verification_worker.start()
+                
+                self.claude_display.append(f"\n🔍 <b>正在验证任务完成度...</b>")
+                self.status_label.setText("验证任务完成度...")
+            else:
+                self.claude_display.append(f"\n❌ <b>任务完成度验证失败：无法保存验证截图</b>")
+        
+        except Exception as e:
+            self.claude_display.append(f"\n❌ <b>启动任务完成度验证失败: {str(e)}</b>")
+    
+    def _on_verification_completed(self, response):
+        """任务完成度验证完成处理"""
+        try:
+            data = response.get('data', {})
+            status = data.get('status', 'unclear')
+            reasoning = data.get('reasoning', '')
+            confidence = data.get('confidence', 0.0)
+            
+            self.claude_display.append(f"\n✅ <b>任务完成度验证结果: {status}</b>")
+            self.claude_display.append(f"🎯 置信度: {confidence:.2%}")
+            self.claude_display.append(f"💭 判断理由: {reasoning}")
+            
+            if status == "completed":
+                self.claude_display.append(f"\n🎉 <b>任务已完成！</b>")
+                self.status_label.setText("任务完成")
+            elif status == "incomplete":
+                next_steps = data.get('next_steps')
+                if next_steps:
+                    self.claude_display.append(f"\n🔄 <b>任务未完成，建议下一步:</b> {next_steps}")
+                    # 这里可以添加继续执行的逻辑
+                    self._continue_task_execution(next_steps)
+                else:
+                    self.claude_display.append(f"\n🔄 <b>任务未完成，但未提供下一步建议</b>")
+                    self.status_label.setText("任务未完成")
+            elif status == "failed":
+                self.claude_display.append(f"\n❌ <b>任务执行失败</b>")
+                self.status_label.setText("任务失败")
+            else:
+                self.claude_display.append(f"\n❓ <b>无法确定任务状态</b>")
+                self.status_label.setText("状态不明")
+        
+        except Exception as e:
+            self.claude_display.append(f"\n❌ <b>处理验证结果失败: {str(e)}</b>")
+    
+    def _on_verification_failed(self, error_msg):
+        """任务完成度验证失败处理"""
+        self.claude_display.append(f"\n❌ <b>任务完成度验证失败: {error_msg}</b>")
+        self.status_label.setText("验证失败")
+    
+    def _continue_task_execution(self, next_steps_description):
+        """继续执行任务"""
+        try:
+            # 将下一步建议作为新的任务指令
+            self.command_input.setPlainText(next_steps_description)
+            self.claude_display.append(f"\n🔄 <b>准备继续执行任务...</b>")
+            
+            # 等待2秒后自动重新开始分析
+            QTimer.singleShot(2000, self.send_task)
+            
+        except Exception as e:
+            self.claude_display.append(f"\n❌ <b>继续执行任务失败: {str(e)}</b>")
     
     
     def _on_execution_started(self, task_id):

@@ -92,6 +92,10 @@ async def websocket_endpoint(websocket: WebSocket):
                 # 处理任务分析请求（支持分阶段响应）
                 response = await handle_task_analysis(message, websocket)
                 await websocket.send_text(json.dumps(response))
+            elif message.get("type") == "verify_task_completion":
+                # 处理任务完成度验证请求
+                response = await handle_task_completion_verification(message, websocket)
+                await websocket.send_text(json.dumps(response))
             else:
                 # 未知消息类型
                 error_response = {
@@ -243,6 +247,86 @@ async def handle_task_analysis(message: dict, websocket: WebSocket) -> dict:
             "task_id": message.get("task_id", "unknown"),
             "timestamp": time.time(),
             "message": f"任务分析失败: {str(e)}"
+        }
+
+async def handle_task_completion_verification(message: dict, websocket: WebSocket) -> dict:
+    """处理任务完成度验证请求"""
+    try:
+        # 解析请求数据
+        verification_data = message["data"]
+        task_id = message["task_id"]
+        original_command = verification_data["original_command"]
+        previous_claude_output = verification_data["previous_claude_output"]
+        verification_screenshot_path = verification_data["verification_screenshot_path"]
+        
+        print(f"处理任务完成度验证: {task_id}")
+        print(f"原始指令: {original_command}")
+        print(f"验证截图: {verification_screenshot_path}")
+        
+        # 使用Claude进行任务完成度验证
+        if claude_service:
+            try:
+                print("🔍 使用Claude验证任务完成度...")
+                status, reasoning, confidence = claude_service.verify_task_completion(
+                    original_command,
+                    previous_claude_output,
+                    verification_screenshot_path
+                )
+                
+                print(f"✅ 任务完成度验证结果: {status} (置信度: {confidence:.2f})")
+                
+                # 构建响应数据
+                verification_result = {
+                    "task_id": task_id,
+                    "status": status,
+                    "reasoning": reasoning,
+                    "confidence": confidence,
+                    "verification_time": time.time()
+                }
+                
+                return {
+                    "type": "task_completion_result",
+                    "task_id": task_id,
+                    "timestamp": time.time(),
+                    "data": verification_result
+                }
+                
+            except Exception as e:
+                print(f"⚠️ Claude任务完成度验证失败: {e}")
+                return {
+                    "type": "task_completion_result",
+                    "task_id": task_id,
+                    "timestamp": time.time(),
+                    "data": {
+                        "task_id": task_id,
+                        "status": "unclear",
+                        "reasoning": f"验证过程发生异常: {str(e)}",
+                        "confidence": 0.0,
+                        "verification_time": time.time()
+                    }
+                }
+        else:
+            print("📝 Claude服务不可用，使用模拟验证...")
+            return {
+                "type": "task_completion_result",
+                "task_id": task_id,
+                "timestamp": time.time(),
+                "data": {
+                    "task_id": task_id,
+                    "status": "unclear",
+                    "reasoning": "Claude服务不可用，无法进行智能验证",
+                    "confidence": 0.0,
+                    "verification_time": time.time()
+                }
+            }
+        
+    except Exception as e:
+        print(f"任务完成度验证失败: {e}")
+        return {
+            "type": "error",
+            "task_id": message.get("task_id", "unknown"),
+            "timestamp": time.time(),
+            "message": f"任务完成度验证失败: {str(e)}"
         }
 
 def simulate_ai_analysis(task_id: str, request: TaskAnalysisRequest, ui_elements: list = None) -> TaskAnalysisResponse:

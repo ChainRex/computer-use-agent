@@ -277,6 +277,7 @@ class ExecutionManager(QObject):
     confirmation_requested = pyqtSignal(int, str, str, object)  # 最后一个参数是回调函数
     error_occurred = pyqtSignal(str)
     status_changed = pyqtSignal(dict)
+    task_completion_check_requested = pyqtSignal(str, str, str)  # task_id, original_command, previous_claude_output
     
     def __init__(self, config: Optional[ExecutionConfig] = None):
         super().__init__()
@@ -300,6 +301,8 @@ class ExecutionManager(QObject):
         
         self.current_worker = None
         self.current_task_id = None
+        self.original_user_command = None  # 保存原始用户指令
+        self.previous_claude_output = None  # 保存上一轮Claude输出
         
         # 状态监控定时器
         self.status_timer = QTimer()
@@ -309,7 +312,8 @@ class ExecutionManager(QObject):
         logger.info("ExecutionManager initialized")
     
     def execute_action_plan(self, action_plan: List[ActionPlan], ui_elements: List[UIElement], 
-                           task_id: str = None) -> bool:
+                           task_id: str = None, original_command: str = None, 
+                           claude_output: str = None) -> bool:
         """
         执行操作计划
         
@@ -317,6 +321,8 @@ class ExecutionManager(QObject):
             action_plan: 操作计划列表
             ui_elements: UI元素列表
             task_id: 任务ID
+            original_command: 原始用户指令
+            claude_output: 上一轮Claude输出
             
         Returns:
             bool: 是否成功启动执行
@@ -330,6 +336,8 @@ class ExecutionManager(QObject):
             return False
         
         self.current_task_id = task_id or f"task_{int(time.time())}"
+        self.original_user_command = original_command
+        self.previous_claude_output = claude_output
         
         # 更新UI元素映射
         self.engine.set_ui_elements(ui_elements)
@@ -365,6 +373,16 @@ class ExecutionManager(QObject):
     
     def _on_execution_completed(self, result: TaskExecutionResult):
         """执行完成处理"""
+        # 触发任务完成度检查
+        if (self.original_user_command and 
+            result.status == ExecutionStatus.SUCCESS):
+            logger.info("开始任务完成度验证...")
+            self.task_completion_check_requested.emit(
+                self.current_task_id,
+                self.original_user_command,
+                self.previous_claude_output or ""
+            )
+        
         self.execution_completed.emit(result)
         self.current_worker = None
         self.current_task_id = None

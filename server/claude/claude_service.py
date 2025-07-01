@@ -81,6 +81,42 @@ class ClaudeService:
             logger.error(f"Claude analysis failed: {str(e)}")
             raise
     
+    def verify_task_completion(
+        self, 
+        original_command: str, 
+        previous_claude_output: str,
+        verification_screenshot_path: str
+    ) -> Tuple[str, str, float]:
+        """
+        使用Claude验证任务完成度
+        
+        Args:
+            original_command: 原始用户指令
+            previous_claude_output: 上一轮Claude输出
+            verification_screenshot_path: 验证截图文件路径
+            
+        Returns:
+            Tuple[str, str, float]: (状态, 推理过程, 置信度)
+        """
+        try:
+            # 构建任务完成度验证提示
+            prompt = self._build_completion_verification_prompt(
+                original_command, 
+                previous_claude_output
+            )
+            
+            # 执行Claude命令（带重试机制）
+            claude_response = self._execute_claude_command_with_retry(prompt, verification_screenshot_path)
+            
+            # 解析Claude响应
+            status, reasoning, confidence = self._parse_completion_response(claude_response)
+            
+            return status, reasoning, confidence
+            
+        except Exception as e:
+            logger.error(f"Claude task completion verification failed: {str(e)}")
+            raise
+    
     def _save_image_from_base64(self, image_base64: str, filename: str) -> str:
         """
         将base64图像保存为文件
@@ -197,6 +233,58 @@ JSON格式要求:
 - macOS系统: 使用Mac特定的快捷键(如Cmd+Space, Cmd+Tab等)  
 - Linux系统: 使用Linux桌面环境相关的快捷键
 - 根据操作系统调整操作方式和界面元素识别策略"""
+
+        return prompt
+    
+    def _build_completion_verification_prompt(self, original_command: str, previous_claude_output: str) -> str:
+        """
+        构建任务完成度验证提示
+        
+        Args:
+            original_command: 原始用户指令
+            previous_claude_output: 上一轮Claude输出
+            
+        Returns:
+            str: 验证提示
+        """
+        prompt = f"""你是一个智能计算机操作助手，正在验证任务执行结果。
+
+**原始用户指令:**
+{original_command}
+
+**上一轮分析和操作计划:**
+{previous_claude_output}
+
+**当前屏幕状态:**
+请分析当前提供的屏幕截图。
+
+**任务验证要求:**
+1. 请仔细对比原始用户指令和当前屏幕状态
+2. 判断用户的原始需求是否已经得到满足
+3. 考虑上一轮的操作计划是否成功执行
+4. 如果任务未完成，分析还需要什么操作
+
+请严格按照以下JSON格式回复，不要添加任何额外的文本或注释:
+{{
+    "status": "completed",
+    "confidence": 0.9,
+    "reasoning": "详细说明你的判断理由，包括对屏幕状态的分析，不要使用双引号",
+    "next_steps": "如果未完成，请描述建议的下一步操作；如果已完成，设为null"
+}}
+
+**状态值说明:**
+- completed: 用户的原始需求已经完全满足
+- incomplete: 部分完成但还需要继续操作
+- failed: 操作失败或结果不符合预期
+- unclear: 无法从当前信息判断任务状态
+
+**JSON格式要求:**
+1. 只输出JSON，不要添加任何说明文字或markdown标记
+2. reasoning和next_steps字段中不要使用双引号，用单引号或中文标点
+3. 确保JSON格式完全有效
+4. confidence值必须在0.0到1.0之间
+
+请基于当前屏幕截图进行客观、准确的判断。"""
 
         return prompt
     
@@ -386,6 +474,88 @@ JSON格式要求:
         except Exception as e:
             logger.error(f"Error parsing Claude response: {str(e)}")
             return self._create_fallback_actions(response), f"Parsing error: {str(e)}", 0.2
+    
+    def _parse_completion_response(self, response: str) -> Tuple[str, str, float]:
+        """
+        解析Claude任务完成度验证响应
+        
+        Args:
+            response: Claude响应文本
+            
+        Returns:
+            Tuple[str, str, float]: (状态, 推理过程, 置信度)
+        """
+        if not response or response.strip() == "":
+            logger.warning("Claude completion verification response is empty")
+            return "unclear", "Empty response from Claude", 0.0
+        
+        try:
+            # 先尝试提取JSON部分
+            json_start = response.find('{')
+            json_end = response.rfind('}') + 1
+            
+            if json_start >= 0 and json_end > json_start:
+                json_str = response[json_start:json_end]
+                response_data = json.loads(json_str)
+            else:
+                # 尝试解析整个响应
+                response_data = json.loads(response)
+            
+            status = response_data.get("status", "unclear")
+            reasoning = response_data.get("reasoning", "")
+            confidence = float(response_data.get("confidence", 0.0))
+            
+            # 验证状态值
+            valid_statuses = ["completed", "incomplete", "failed", "unclear"]
+            if status not in valid_statuses:
+                logger.warning(f"Invalid status: {status}, defaulting to unclear")
+                status = "unclear"
+            
+            # 验证置信度范围
+            confidence = max(0.0, min(1.0, confidence))
+            
+            logger.info(f"Parsed completion verification: status={status}, confidence={confidence:.2f}")
+            return status, reasoning, confidence
+            
+        except json.JSONDecodeError as e:
+            logger.warning(f"Failed to parse completion response as JSON: {e}")
+            logger.warning(f"Raw response: {response[:500]}...")
+            
+            # 尝试清理响应并重新解析
+            cleaned_response = self._clean_claude_response(response)
+            if cleaned_response != response:
+                try:
+                    return self._parse_completion_response(cleaned_response)
+                except Exception:
+                    pass
+            
+            # 降级处理：基于文本内容判断
+            return self._extract_completion_from_text(response)
+        except Exception as e:
+            logger.error(f"Error parsing completion response: {str(e)}")
+            return "unclear", f"Parsing error: {str(e)}", 0.0
+    
+    def _extract_completion_from_text(self, response: str) -> Tuple[str, str, float]:
+        """
+        从文本响应中提取任务完成状态
+        
+        Args:
+            response: Claude文本响应
+            
+        Returns:
+            Tuple[str, str, float]: (状态, 推理过程, 置信度)
+        """
+        response_lower = response.lower()
+        
+        # 简单的关键词匹配
+        if "completed" in response_lower or "完成" in response:
+            return "completed", "基于文本分析：任务已完成", 0.6
+        elif "incomplete" in response_lower or "未完成" in response:
+            return "incomplete", "基于文本分析：任务未完成", 0.6
+        elif "failed" in response_lower or "失败" in response:
+            return "failed", "基于文本分析：任务执行失败", 0.6
+        else:
+            return "unclear", f"无法从文本中确定状态: {response[:100]}...", 0.3
     
     def _create_text_based_actions(self, response: str) -> List[ActionPlan]:
         """
