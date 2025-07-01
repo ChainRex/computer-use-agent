@@ -72,9 +72,11 @@ pip install -r requirements.txt
 - **Output**: Annotated screenshots + structured UI element data
 
 ### WebSocket Communication
-- **Shared Event Loop**: Client uses thread-safe shared event loop for multiple connections
-- **Timeouts**: 10s connection, 60s analysis response, 30s general operations
-- **Error Handling**: Connection retry, timeout handling, graceful disconnection
+- **Connection Management**: WebSocketManager with automatic retry and exponential backoff
+- **Optimized Timeouts**: 60s ping interval, 30s ping timeout, 7-minute receive timeout for Claude
+- **Long Operation Support**: Designed to handle Claude's extended processing times (up to 5+ minutes)
+- **Error Handling**: Comprehensive timeout detection, connection retry, graceful disconnection
+- **Performance**: Compression disabled to reduce CPU load during long operations
 
 ### Screenshot Management
 - **Format**: PIL Images → base64 encoding for transmission
@@ -187,8 +189,21 @@ The system now supports **real-time staged display**:
 
 ### Common Issues
 - Model loading failures: Check paths in `server/weights/`
-- WebSocket timeouts: Verify server is running and accessible
+- WebSocket keepalive timeouts: System uses optimized 60s ping intervals for long Claude operations
 - PyQt threading: Use proper Qt signal/slot mechanisms for UI updates
 - Event loop conflicts: Client uses shared event loop pattern to avoid conflicts
 - Large image WebSocket limits: Use smaller images for testing (see `create_small_test_image.py`)
-- Claude CLI timeout: Ensure Claude CLI is properly installed and authenticated
+- Claude CLI timeout: Claude operations can take 3-5 minutes, client configured for 7-minute timeout
+- Connection failures: WebSocketManager includes automatic retry with exponential backoff
+
+### WebSocket Configuration
+```python
+# Optimized settings in client/websocket_config.py
+WEBSOCKET_CONFIG = {
+    'ping_interval': 60,    # 60s ping interval
+    'ping_timeout': 30,     # 30s ping timeout  
+    'close_timeout': 30,    # 30s close timeout
+    'compression': None     # Disabled for performance
+}
+RECEIVE_TIMEOUT = 420.0     # 7-minute receive timeout
+```
