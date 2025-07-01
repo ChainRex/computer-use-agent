@@ -48,20 +48,33 @@ pip install -r requirements.txt
 
 #### Client Side (`client/`)
 - **Main Window** (`ui/main_window.py`): PyQt6 GUI with task history, settings, and UI element display
+  - Enhanced operation display with element IDs
+  - Operating system detection and transmission
+  - Real-time staged result display
 - **Screenshot Manager** (`screenshot/screenshot_manager.py`): Handles screen capture with optimization and caching
 - **Server Client** (`communication/server_client.py`): WebSocket client with shared event loop and connection management
-- **Data Flow**: UI → Screenshot → WebSocket → Server
+- **Data Flow**: UI → Screenshot + OS Info → WebSocket → Server
 
 #### Server Side (`server/`)
 - **FastAPI Server** (`main.py`, `api/main.py`): WebSocket endpoints and REST API
+  - Staged response system for real-time feedback
+  - Enhanced error handling and timeout management
 - **OmniParser Service** (`omniparser/omniparser_service.py`): Screen element detection using Florence-2 models
+- **Claude Service** (`claude/claude_service.py`): AI-powered task analysis and operation generation
+  - Robust retry mechanisms with exponential backoff
+  - JSON response cleaning and validation
+  - Operating system context integration
+  - Element-based operation planning
 - **Model Weights**: Located in `server/weights/` with Florence-2 models for UI element detection and captioning
 
 ### Data Models (`shared/schemas/data_models.py`)
-- `TaskAnalysisRequest`: Client request with text command and screenshot
+- `TaskAnalysisRequest`: Client request with text command, screenshot, and OS info
 - `TaskAnalysisResponse`: Server response with parsed UI elements and action plans
 - `UIElement`: Represents detected screen elements with coordinates and metadata
-- `ActionPlan`: Individual actions for task execution
+- `ActionPlan`: Individual actions for task execution with element references
+- `OSInfo`: Operating system information for context-aware analysis
+- `OmniParserResult`: Intermediate results from UI element detection
+- `ClaudeAnalysisResult`: AI-generated operation plans and reasoning
 
 ## Key Technical Details
 
@@ -133,6 +146,9 @@ This ensures all changes are tracked and the repository stays up to date.
 - ✅ Claude CLI integration for intelligent task analysis
 - ✅ Staged display system (OmniParser → Claude results)
 - ✅ Enhanced data models with pyautogui operation support
+- ✅ Operating system detection and context-aware AI analysis
+- ✅ Robust Claude response parsing with retry mechanisms
+- ✅ Element ID display in operation plans
 
 ### Pending Implementation  
 - [ ] pyautogui automation execution engine  
@@ -181,11 +197,19 @@ The system now supports **real-time staged display**:
 - Real-time status updates during processing
 
 ### Claude CLI Integration
-- **Command**: `claude -p "prompt" image_path`
-- **Timeout**: 5 minutes (300 seconds)
+- **Command**: `claude -p "prompt_with_image_path"`
+- **Timeout**: 5 minutes (300 seconds) with 3 retry attempts
 - **Image Storage**: `/root/autodl-tmp/computer-use-agent/server/claude/img/`
-- **Response Parsing**: JSON format with fallback to text-based parsing
-- **Fallback Mode**: Simple keyword matching when Claude unavailable
+- **Response Parsing**: Enhanced JSON parsing with automatic cleaning
+- **Retry Mechanism**: Exponential backoff on failures
+- **Fallback Mode**: Text-based parsing when JSON parsing fails
+
+#### Claude Service Enhancements
+- **Operating System Context**: Prompts include client OS information for platform-specific operations
+- **Element-Based Operations**: Claude references UI element IDs instead of coordinates
+- **Smart Prompt Engineering**: Prevents JSON formatting issues with quote escaping
+- **Response Validation**: Multi-layer validation with automatic retry on invalid responses
+- **Cross-Platform Shortcuts**: OS-specific keyboard shortcuts (Windows/macOS/Linux)
 
 ### Common Issues
 - Model loading failures: Check paths in `server/weights/`
@@ -195,6 +219,13 @@ The system now supports **real-time staged display**:
 - Large image WebSocket limits: Use smaller images for testing (see `create_small_test_image.py`)
 - Claude CLI timeout: Claude operations can take 3-5 minutes, client configured for 7-minute timeout
 - Connection failures: WebSocketManager includes automatic retry with exponential backoff
+
+#### Claude Integration Issues
+- **JSON Parsing Errors**: System automatically cleans responses and retries parsing
+- **Empty Responses**: Retry mechanism with validation handles Claude timeouts
+- **Quote Escaping**: Smart prompt engineering prevents JSON format corruption
+- **OSInfo Access**: Proper Pydantic model handling for operating system data
+- **Element ID Missing**: Enhanced UI display shows element IDs for all click operations
 
 ### WebSocket Configuration
 ```python
