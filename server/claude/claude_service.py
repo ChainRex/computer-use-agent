@@ -8,6 +8,8 @@ import os
 import base64
 import json
 import logging
+import time
+import re
 from typing import Dict, List, Optional, Tuple
 from PIL import Image
 import io
@@ -30,7 +32,12 @@ class ClaudeService:
         # 使用固定的img目录而不是临时目录
         self.img_dir = "/root/autodl-tmp/computer-use-agent/server/claude/img"
         os.makedirs(self.img_dir, exist_ok=True)
-        logger.info(f"Claude service initialized with img dir: {self.img_dir}")
+        
+        # 重试配置
+        self.max_retries = self.config.get('max_retries', 3)
+        self.retry_delay = self.config.get('retry_delay', 2.0)
+        
+        logger.info(f"Claude service initialized with img dir: {self.img_dir}, max_retries: {self.max_retries}")
     
     def analyze_task_with_claude(
         self, 
@@ -61,8 +68,8 @@ class ClaudeService:
             # 构建Claude分析提示
             prompt = self._build_analysis_prompt(text_command, ui_elements)
             
-            # 执行Claude命令
-            claude_response = self._execute_claude_command(prompt, image_path)
+            # 执行Claude命令（带重试机制）
+            claude_response = self._execute_claude_command_with_retry(prompt, image_path)
             
             # 解析Claude响应
             actions, reasoning, confidence = self._parse_claude_response(claude_response, ui_elements)
@@ -177,6 +184,48 @@ class ClaudeService:
 6. 如果没有合适的UI元素可以点击，请在reasoning中说明原因"""
 
         return prompt
+    
+    def _execute_claude_command_with_retry(self, prompt: str, image_path: str) -> str:
+        """
+        执行Claude命令（带重试机制）
+        
+        Args:
+            prompt: 分析提示
+            image_path: 图像文件路径
+            
+        Returns:
+            str: Claude响应
+        """
+        last_error = None
+        
+        for attempt in range(self.max_retries + 1):
+            try:
+                if attempt > 0:
+                    logger.info(f"Claude命令重试 {attempt}/{self.max_retries}")
+                    time.sleep(self.retry_delay * attempt)  # 指数退避
+                
+                response = self._execute_claude_command(prompt, image_path)
+                
+                # 验证响应是否为空或无效
+                if not response or response.strip() == "":
+                    raise RuntimeError("Claude returned empty response")
+                
+                # 简单验证响应是否包含有效内容
+                if len(response.strip()) < 10:
+                    raise RuntimeError(f"Claude response too short: {len(response)} chars")
+                
+                logger.info(f"Claude命令成功 (尝试 {attempt + 1})")
+                return response
+                
+            except Exception as e:
+                last_error = e
+                logger.warning(f"Claude命令失败 (尝试 {attempt + 1}): {str(e)}")
+                
+                if attempt == self.max_retries:
+                    break
+        
+        logger.error(f"Claude命令最终失败，已重试 {self.max_retries} 次")
+        raise last_error or RuntimeError("Claude command failed after all retries")
     
     def _execute_claude_command(self, prompt: str, image_path: str) -> str:
         """
@@ -305,7 +354,18 @@ class ClaudeService:
             
         except json.JSONDecodeError as e:
             logger.warning(f"Failed to parse Claude response as JSON: {e}")
-            logger.debug(f"Raw response: {response[:200]}...")
+            logger.warning(f"Raw response length: {len(response)}")
+            logger.warning(f"Raw response preview: {response[:500]}...")  # 增加预览长度
+            
+            # 尝试清理响应文本并重新解析
+            cleaned_response = self._clean_claude_response(response)
+            if cleaned_response != response:
+                logger.info("尝试解析清理后的响应")
+                try:
+                    return self._parse_claude_response(cleaned_response, ui_elements)
+                except Exception as clean_error:
+                    logger.warning(f"清理后的响应解析也失败: {clean_error}")
+            
             # 降级处理：基于文本内容创建简单操作
             return self._create_text_based_actions(response), f"Text-based parsing: {response[:100]}...", 0.4
         except Exception as e:
@@ -356,6 +416,59 @@ class ClaudeService:
             ))
         
         return actions
+    
+    def _clean_claude_response(self, response: str) -> str:
+        """
+        清理Claude响应文本，尝试提取有效的JSON部分
+        
+        Args:
+            response: 原始Claude响应
+            
+        Returns:
+            str: 清理后的响应文本
+        """
+        try:
+            # 移除可能的markdown代码块标记
+            response = re.sub(r'```json\s*', '', response)
+            response = re.sub(r'```\s*$', '', response)
+            
+            # 移除响应开头的说明文字
+            lines = response.strip().split('\n')
+            json_start_line = -1
+            
+            for i, line in enumerate(lines):
+                if line.strip().startswith('{'):
+                    json_start_line = i
+                    break
+            
+            if json_start_line >= 0:
+                # 从JSON开始的地方截取
+                json_lines = lines[json_start_line:]
+                cleaned_response = '\n'.join(json_lines)
+                
+                # 尝试找到JSON结束位置
+                brace_count = 0
+                json_end = -1
+                for i, char in enumerate(cleaned_response):
+                    if char == '{':
+                        brace_count += 1
+                    elif char == '}':
+                        brace_count -= 1
+                        if brace_count == 0:
+                            json_end = i + 1
+                            break
+                
+                if json_end > 0:
+                    cleaned_response = cleaned_response[:json_end]
+                
+                logger.debug(f"Cleaned response length: {len(cleaned_response)}")
+                return cleaned_response.strip()
+            
+            return response
+            
+        except Exception as e:
+            logger.warning(f"Error cleaning Claude response: {e}")
+            return response
 
     def _create_fallback_actions(self, response: str) -> List[ActionPlan]:
         """
