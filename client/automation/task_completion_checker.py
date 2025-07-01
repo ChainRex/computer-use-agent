@@ -33,7 +33,9 @@ class CompletionCheckResult:
     confidence: float            # 置信度 (0.0-1.0)
     reasoning: str              # 判断理由
     next_steps: Optional[str]   # 如果未完成，建议的下一步操作
-    screenshot_path: Optional[str] = None
+    screenshot_path: Optional[str] = None  # 保留兼容性
+    screenshot_base64: Optional[str] = None  # 截图的base64数据
+    verification_prompt: Optional[str] = None  # 验证提示词
     check_time: float = 0.0
 
 class TaskCompletionChecker:
@@ -131,17 +133,16 @@ class TaskCompletionChecker:
                 screenshot_base64
             )
             
-            # 3. 保存截图到临时目录（用于Claude分析）
-            screenshot_path = self._save_verification_screenshot(task_id, screenshot_base64)
-            
-            # 4. 返回包含提示词和截图路径的结果，实际Claude调用由UI层处理
+            # 3. 直接返回包含截图数据的结果，不需要保存文件
             return CompletionCheckResult(
                 task_id=task_id,
                 status=TaskStatus.UNCLEAR,  # 初始状态，等待Claude分析
                 confidence=0.0,
                 reasoning="等待Claude分析任务完成状态...",
                 next_steps=None,
-                screenshot_path=screenshot_path,
+                screenshot_path=None,  # 不需要保存文件
+                screenshot_base64=screenshot_base64,  # 直接包含截图数据
+                verification_prompt=prompt,  # 包含验证提示词
                 check_time=time.time() - start_time
             )
             
@@ -156,44 +157,6 @@ class TaskCompletionChecker:
                 check_time=time.time() - start_time
             )
     
-    def _save_verification_screenshot(self, task_id: str, screenshot_base64: str) -> Optional[str]:
-        """
-        保存验证截图到临时目录
-        
-        Args:
-            task_id: 任务ID
-            screenshot_base64: 截图的base64编码
-            
-        Returns:
-            Optional[str]: 保存的文件路径，失败时返回None
-        """
-        try:
-            import base64
-            from PIL import Image
-            import io
-            
-            # 解码base64图像
-            image_data = base64.b64decode(screenshot_base64)
-            image = Image.open(io.BytesIO(image_data))
-            
-            # 确保临时目录存在
-            temp_dir = "/root/autodl-tmp/computer-use-agent/server/claude/img/"
-            os.makedirs(temp_dir, exist_ok=True)
-            
-            # 生成文件名
-            timestamp = int(time.time())
-            filename = f"verification_{task_id}_{timestamp}.png"
-            filepath = os.path.join(temp_dir, filename)
-            
-            # 保存图像
-            image.save(filepath, "PNG")
-            logger.info(f"验证截图已保存: {filepath}")
-            
-            return filepath
-            
-        except Exception as e:
-            logger.error(f"保存验证截图失败: {e}")
-            return None
     
     def parse_claude_response(self, response: str, task_id: str, check_time: float) -> CompletionCheckResult:
         """
