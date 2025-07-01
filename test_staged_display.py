@@ -44,7 +44,14 @@ async def test_staged_websocket():
         uri = "ws://localhost:8000/ws"
         print(f"🔗 连接到: {uri}")
         
-        async with websockets.connect(uri, max_size=10*1024*1024) as websocket:
+        async with websockets.connect(
+            uri, 
+            max_size=10*1024*1024,
+            ping_interval=60,
+            ping_timeout=30,
+            close_timeout=30,
+            compression=None
+        ) as websocket:
             print("✅ WebSocket连接成功")
             
             # 构建测试请求

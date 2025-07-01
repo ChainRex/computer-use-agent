@@ -173,21 +173,22 @@ class TaskWorker(QThread):
     
     async def _run_async_task(self):
         """异步任务执行"""
-        import websockets
+        import sys
+        import os
         import json
         import uuid
         import time
         
+        # 添加客户端目录到路径以导入websocket_config
+        client_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        if client_dir not in sys.path:
+            sys.path.append(client_dir)
+        
         try:
-            # 连接WebSocket
-            # 设置更长的ping间隔和超时时间来避免keepalive超时
-            async with websockets.connect(
-                self.server_url, 
-                max_size=10*1024*1024,
-                ping_interval=20,  # 20秒ping间隔
-                ping_timeout=10,   # 10秒ping超时
-                close_timeout=10   # 10秒关闭超时
-            ) as websocket:
+            from websocket_config import WebSocketManager
+            
+            # 使用WebSocket管理器
+            async with WebSocketManager(self.server_url) as ws_manager:
                 # 构建任务请求
                 task_id = str(uuid.uuid4())
                 request = {
@@ -202,14 +203,12 @@ class TaskWorker(QThread):
                 }
                 
                 # 发送请求
-                await websocket.send(json.dumps(request))
+                await ws_manager.send_message(request)
                 
                 # 接收分阶段响应
                 while True:
                     try:
-                        response_text = await asyncio.wait_for(websocket.recv(), timeout=60.0)
-                        response = json.loads(response_text)
-                        
+                        response = await ws_manager.receive_message()
                         message_type = response.get("type")
                         
                         if message_type == "omniparser_result":
@@ -228,8 +227,11 @@ class TaskWorker(QThread):
                         else:
                             print(f"未知消息类型: {message_type}")
                             
-                    except asyncio.TimeoutError:
-                        self.task_failed.emit("服务端响应超时")
+                    except Exception as e:
+                        if "超时" in str(e):
+                            self.task_failed.emit(f"服务端响应超时: {str(e)}")
+                        else:
+                            self.task_failed.emit(f"接收响应失败: {str(e)}")
                         break
                         
         except Exception as e:
