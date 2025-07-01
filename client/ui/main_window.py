@@ -2,10 +2,11 @@ import sys
 import asyncio
 import os
 import platform
+import time
 from PyQt6.QtWidgets import (QApplication, QMainWindow, QVBoxLayout, QHBoxLayout, 
                             QWidget, QPushButton, QTextEdit, QLabel, QLineEdit, 
                             QTextBrowser, QSplitter, QFrame, QTabWidget, QTableWidget, 
-                            QTableWidgetItem, QHeaderView, QScrollArea)
+                            QTableWidgetItem, QHeaderView, QScrollArea, QComboBox, QMessageBox)
 from PyQt6.QtCore import Qt, QThread, pyqtSignal, QTimer, QMutex
 from PyQt6.QtGui import QFont, QPixmap
 
@@ -15,6 +16,7 @@ sys.path.append(project_root)
 
 from client.screenshot.screenshot_manager import ScreenshotManager
 from client.communication.server_client import ServerClient
+from client.automation import ExecutionManager, ExecutionConfig, ExecutionMode
 
 class ScreenshotWorker(QThread):
     """专用截图工作线程"""
@@ -274,8 +276,25 @@ class MainWindow(QMainWindow):
         self.current_screenshot_base64 = None
         self.current_screenshot_image = None
         
+        # 初始化自动化执行管理器
+        execution_config = ExecutionConfig(
+            mode=ExecutionMode.SEMI_AUTO,
+            confirm_dangerous_actions=True,
+            screenshot_enabled=True,
+            strict_mode=False,
+            auto_retry=True
+        )
+        self.execution_manager = ExecutionManager(execution_config)
+        
+        # 执行相关数据
+        self.current_action_plan = []
+        self.current_ui_elements = []
+        
         # 设置UI
         self.setup_ui()
+        
+        # 连接执行管理器信号
+        self._connect_execution_signals()
         
         # 启动截图工作线程
         self.screenshot_worker = ScreenshotWorker(self.screenshot_manager)
@@ -382,6 +401,46 @@ class MainWindow(QMainWindow):
         button_layout.addWidget(self.performance_btn)
         button_layout.addWidget(self.clear_cache_btn)
         layout.addLayout(button_layout)
+        
+        # 执行控制面板
+        execution_frame = QFrame()
+        execution_frame.setFrameStyle(QFrame.Shape.StyledPanel)
+        execution_layout = QVBoxLayout(execution_frame)
+        execution_layout.addWidget(QLabel("🎮 自动化执行控制:"))
+        
+        # 执行控制按钮
+        exec_button_layout = QHBoxLayout()
+        self.execute_btn = QPushButton("执行操作")
+        self.execute_btn.clicked.connect(self.execute_action_plan)
+        self.execute_btn.setEnabled(False)
+        
+        self.pause_btn = QPushButton("暂停")
+        self.pause_btn.clicked.connect(self.pause_execution)
+        self.pause_btn.setEnabled(False)
+        
+        self.stop_btn = QPushButton("停止")
+        self.stop_btn.clicked.connect(self.stop_execution)
+        self.stop_btn.setEnabled(False)
+        
+        exec_button_layout.addWidget(self.execute_btn)
+        exec_button_layout.addWidget(self.pause_btn)
+        exec_button_layout.addWidget(self.stop_btn)
+        execution_layout.addLayout(exec_button_layout)
+        
+        # 执行模式选择
+        mode_layout = QHBoxLayout()
+        mode_layout.addWidget(QLabel("执行模式:"))
+        self.execution_mode_combo = QComboBox()
+        self.execution_mode_combo.addItems(["半自动(推荐)", "手动确认", "全自动", "逐步执行"])
+        self.execution_mode_combo.setCurrentText("半自动(推荐)")
+        mode_layout.addWidget(self.execution_mode_combo)
+        execution_layout.addLayout(mode_layout)
+        
+        # 执行状态显示
+        self.execution_status = QLabel("执行状态: 就绪")
+        execution_layout.addWidget(self.execution_status)
+        
+        layout.addWidget(execution_frame)
         
         # 创建标签页面板
         self.tab_widget = QTabWidget()
@@ -775,6 +834,20 @@ class MainWindow(QMainWindow):
                 self.omniparser_display.append(f"\n📸 <b>标注截图已更新</b>")
                 self.annotated_info.setText(f"OmniParser: 检测到{element_count}个元素，处理时间{processing_time:.2f}秒")
             
+            # 保存UI元素供执行使用
+            from shared.schemas.data_models import UIElement
+            self.current_ui_elements = []
+            for elem_data in ui_elements:
+                ui_element = UIElement(
+                    id=elem_data.get('id', 0),
+                    type=elem_data.get('type', ''),
+                    description=elem_data.get('description', ''),
+                    coordinates=elem_data.get('coordinates', []),
+                    text=elem_data.get('text', ''),
+                    confidence=elem_data.get('confidence', 0.0)
+                )
+                self.current_ui_elements.append(ui_element)
+            
             # 更新状态
             self.status_label.setText("OmniParser分析完成，等待Claude分析...")
             
@@ -835,11 +908,33 @@ class MainWindow(QMainWindow):
             else:
                 self.claude_display.append(f"\n⚠️ 未生成操作计划")
             
+            # 保存操作计划和UI元素供执行使用
+            from shared.schemas.data_models import ActionPlan
+            self.current_action_plan = []
+            for action_data in actions:
+                action = ActionPlan(
+                    type=action_data.get('type', ''),
+                    description=action_data.get('description', ''),
+                    element_id=action_data.get('element_id'),
+                    coordinates=action_data.get('coordinates'),
+                    text=action_data.get('text'),
+                    duration=action_data.get('duration')
+                )
+                self.current_action_plan.append(action)
+            
+            # 启用执行按钮
+            if self.current_action_plan:
+                self.execute_btn.setEnabled(True)
+                self.claude_display.append(f"\n✅ <b>操作计划已准备就绪，可以点击'执行操作'按钮开始自动化执行</b>")
+            else:
+                self.execute_btn.setEnabled(False)
+            
             # 更新状态
             self.status_label.setText("Claude分析完成")
             
         except Exception as e:
             self.claude_display.append(f"❌ 解析Claude结果失败: {str(e)}")
+            self.execute_btn.setEnabled(False)
     
     def display_annotated_screenshot(self, annotated_base64):
         """显示标注后的截图"""
@@ -970,6 +1065,181 @@ Base64缓存数量: {stats.get('base64_cache_size', 0)}
         except Exception as e:
             self.result_display.append(f"❌ 清理缓存失败: {str(e)}")
     
+    def _connect_execution_signals(self):
+        """连接执行管理器信号"""
+        self.execution_manager.execution_started.connect(self._on_execution_started)
+        self.execution_manager.execution_completed.connect(self._on_execution_completed)
+        self.execution_manager.execution_paused.connect(self._on_execution_paused)
+        self.execution_manager.execution_resumed.connect(self._on_execution_resumed)
+        self.execution_manager.execution_stopped.connect(self._on_execution_stopped)
+        self.execution_manager.action_started.connect(self._on_action_started)
+        self.execution_manager.action_completed.connect(self._on_action_completed)
+        self.execution_manager.confirmation_requested.connect(self._on_confirmation_requested)
+        self.execution_manager.error_occurred.connect(self._on_execution_error)
+        self.execution_manager.status_changed.connect(self._on_execution_status_changed)
+    
+    def execute_action_plan(self):
+        """执行操作计划"""
+        if not self.current_action_plan:
+            QMessageBox.warning(self, "警告", "没有可执行的操作计划。请先发送任务进行分析。")
+            return
+        
+        if self.execution_manager.is_executing():
+            QMessageBox.warning(self, "警告", "已有任务在执行中。")
+            return
+        
+        # 更新执行配置
+        mode_text = self.execution_mode_combo.currentText()
+        if mode_text == "手动确认":
+            mode = ExecutionMode.MANUAL
+        elif mode_text == "全自动":
+            mode = ExecutionMode.FULL_AUTO
+        elif mode_text == "逐步执行":
+            mode = ExecutionMode.STEP_BY_STEP
+        else:  # 半自动(推荐)
+            mode = ExecutionMode.SEMI_AUTO
+        
+        config = ExecutionConfig(
+            mode=mode,
+            confirm_dangerous_actions=True,
+            screenshot_enabled=True,
+            strict_mode=False,
+            auto_retry=True
+        )
+        self.execution_manager.update_config(config)
+        
+        # 开始执行
+        success = self.execution_manager.execute_action_plan(
+            self.current_action_plan,
+            self.current_ui_elements,
+            f"task_{int(time.time())}"
+        )
+        
+        if not success:
+            QMessageBox.critical(self, "错误", "启动执行失败。")
+    
+    def pause_execution(self):
+        """暂停执行"""
+        self.execution_manager.pause_execution()
+    
+    def stop_execution(self):
+        """停止执行"""
+        reply = QMessageBox.question(
+            self, "确认", 
+            "确定要停止当前执行吗？", 
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
+        )
+        
+        if reply == QMessageBox.StandardButton.Yes:
+            self.execution_manager.stop_execution()
+    
+    def _on_execution_started(self, task_id):
+        """执行开始处理"""
+        self.execution_status.setText(f"执行状态: 正在执行 ({task_id})")
+        self.execute_btn.setEnabled(False)
+        self.pause_btn.setEnabled(True)
+        self.stop_btn.setEnabled(True)
+        self.result_display.append(f"🚀 开始执行任务: {task_id}")
+    
+    def _on_execution_completed(self, result):
+        """执行完成处理"""
+        self.execution_status.setText(f"执行状态: 完成")
+        self.execute_btn.setEnabled(True)
+        self.pause_btn.setEnabled(False)
+        self.stop_btn.setEnabled(False)
+        
+        # 显示执行结果
+        success_rate = result.success_rate * 100
+        self.result_display.append(
+            f"✅ 任务执行完成!\n"
+            f"   成功率: {success_rate:.1f}% ({result.completed_actions}/{result.total_actions})\n"
+            f"   执行时间: {result.total_execution_time:.2f}秒\n"
+            f"   状态: {result.status.value}"
+        )
+        
+        if result.final_error:
+            self.result_display.append(f"❌ 错误: {result.final_error}")
+    
+    def _on_execution_paused(self):
+        """执行暂停处理"""
+        self.execution_status.setText("执行状态: 已暂停")
+        self.pause_btn.setText("恢复")
+        self.pause_btn.clicked.disconnect()
+        self.pause_btn.clicked.connect(self.resume_execution)
+        self.result_display.append("⏸️ 执行已暂停")
+    
+    def _on_execution_resumed(self):
+        """执行恢复处理"""
+        self.execution_status.setText("执行状态: 正在执行")
+        self.pause_btn.setText("暂停")
+        self.pause_btn.clicked.disconnect()
+        self.pause_btn.clicked.connect(self.pause_execution)
+        self.result_display.append("▶️ 执行已恢复")
+    
+    def _on_execution_stopped(self):
+        """执行停止处理"""
+        self.execution_status.setText("执行状态: 已停止")
+        self.execute_btn.setEnabled(True)
+        self.pause_btn.setEnabled(False)
+        self.stop_btn.setEnabled(False)
+        self.pause_btn.setText("暂停")
+        self.pause_btn.clicked.disconnect()
+        self.pause_btn.clicked.connect(self.pause_execution)
+        self.result_display.append("⏹️ 执行已停止")
+    
+    def resume_execution(self):
+        """恢复执行"""
+        self.execution_manager.resume_execution()
+    
+    def _on_action_started(self, action_index, description):
+        """操作开始处理"""
+        self.result_display.append(f"🔄 步骤 {action_index + 1}: {description}")
+    
+    def _on_action_completed(self, action_index, result):
+        """操作完成处理"""
+        if result.status.value == "success":
+            icon = "✅"
+        else:
+            icon = "❌"
+        
+        self.result_display.append(
+            f"{icon} 步骤 {action_index + 1} 完成 - {result.description} "
+            f"(耗时: {result.execution_time:.2f}s)"
+        )
+        
+        if result.error_message:
+            self.result_display.append(f"   错误: {result.error_message}")
+    
+    def _on_confirmation_requested(self, action_index, action_type, description, callback):
+        """用户确认请求处理"""
+        reply = QMessageBox.question(
+            self, "执行确认",
+            f"即将执行操作 {action_index + 1}:\n\n"
+            f"类型: {action_type}\n"
+            f"描述: {description}\n\n"
+            f"是否继续执行？",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
+        )
+        
+        confirmed = reply == QMessageBox.StandardButton.Yes
+        callback(confirmed)
+        
+        if not confirmed:
+            self.result_display.append(f"❌ 用户取消了操作 {action_index + 1}")
+    
+    def _on_execution_error(self, error_message):
+        """执行错误处理"""
+        self.execution_status.setText("执行状态: 错误")
+        self.execute_btn.setEnabled(True)
+        self.pause_btn.setEnabled(False)
+        self.stop_btn.setEnabled(False)
+        self.result_display.append(f"❌ 执行错误: {error_message}")
+    
+    def _on_execution_status_changed(self, status):
+        """执行状态变化处理"""
+        # 可以在这里更新更详细的状态信息
+        pass
+    
     def closeEvent(self, event):
         """窗口关闭事件 - 清理资源"""
         try:
@@ -989,6 +1259,10 @@ Base64缓存数量: {stats.get('base64_cache_size', 0)}
             # 断开服务端连接
             if self.server_client and self.server_client.connected:
                 self.server_client.disconnect_sync()
+            
+            # 停止执行管理器
+            if hasattr(self, 'execution_manager'):
+                self.execution_manager.stop_execution()
             
             # 关闭所有ServerClient连接
             ServerClient.shutdown_all()
