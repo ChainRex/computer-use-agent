@@ -647,49 +647,68 @@ class MainWindow(QMainWindow):
     
     def on_task_completed(self, result):
         """任务完成回调"""
-        self.result_display.append(f"✅ 服务端响应:")
-        self.result_display.append(f"   任务ID: {result.task_id}")
-        self.result_display.append(f"   成功: {result.success}")
-        
-        if result.reasoning:
-            self.result_display.append(f"   分析: {result.reasoning}")
-        
-        # 显示标注截图
-        if hasattr(result, 'annotated_screenshot_base64') and result.annotated_screenshot_base64:
-            self.display_annotated_screenshot(result.annotated_screenshot_base64)
-            self.result_display.append(f"   📸 已更新OmniParser标注截图")
-        
-        # 显示UI元素信息
-        if hasattr(result, 'ui_elements') and result.ui_elements:
-            self.result_display.append(f"   🔍 检测到UI元素: {len(result.ui_elements)}个")
-            for elem in result.ui_elements[:5]:  # 只显示前5个元素
-                coords = f"({elem.coordinates[0]:.0f},{elem.coordinates[1]:.0f})" if elem.coordinates and len(elem.coordinates) >= 2 else "未知位置"
-                self.result_display.append(f"     - {elem.type} {coords}: {elem.description[:40]}...")
-            if len(result.ui_elements) > 5:
-                self.result_display.append(f"     ... 还有{len(result.ui_elements)-5}个元素，查看'UI元素详情'标签页获取完整列表")
+        try:
+            self.result_display.append(f"✅ 最终任务完成:")
             
-            # 更新UI元素表格
-            self.update_elements_table(result.ui_elements)
+            # 处理字典格式和对象格式
+            if isinstance(result, dict):
+                task_id = result.get('task_id', '未知')
+                data = result.get('data', {})
+                success = data.get('success', False)
+                reasoning = data.get('reasoning', '')
+                annotated_screenshot = data.get('annotated_screenshot_base64')
+                ui_elements = data.get('ui_elements', [])
+                actions = data.get('actions', [])
+                error_message = data.get('error_message')
+            else:
+                # 对象格式（保持兼容性）
+                task_id = result.task_id
+                success = result.success
+                reasoning = result.reasoning
+                annotated_screenshot = getattr(result, 'annotated_screenshot_base64', None)
+                ui_elements = getattr(result, 'ui_elements', [])
+                actions = getattr(result, 'actions', [])
+                error_message = getattr(result, 'error_message', None)
             
-            # 更新标注信息
-            self.annotated_info.setText(f"OmniParser信息: 检测到{len(result.ui_elements)}个UI元素")
+            self.result_display.append(f"   任务ID: {task_id}")
+            self.result_display.append(f"   成功状态: {success}")
             
-            # 自动切换到UI元素详情标签页
-            self.tab_widget.setCurrentIndex(1)
-        
-        if result.actions:
-            self.result_display.append(f"   计划动作数: {len(result.actions)}")
-            for i, action in enumerate(result.actions):
-                self.result_display.append(f"     {i+1}. {action.type}: {action.description}")
-        
-        if result.expected_outcome:
-            self.result_display.append(f"   预期结果: {result.expected_outcome}")
-        
-        if result.error_message:
-            self.result_display.append(f"   错误: {result.error_message}")
-        
-        self.status_label.setText("任务完成")
-        self.send_task_btn.setEnabled(True)
+            if reasoning:
+                self.result_display.append(f"   推理总结: {reasoning[:100]}...")
+            
+            if actions:
+                self.result_display.append(f"   操作计划: {len(actions)}个步骤")
+            
+            if error_message:
+                self.result_display.append(f"   错误信息: {error_message}")
+            
+            # 显示标注截图（如果还没有显示的话）
+            if annotated_screenshot:
+                try:
+                    self.display_annotated_screenshot(annotated_screenshot)
+                    self.result_display.append(f"   📸 标注截图已更新")
+                except Exception as e:
+                    self.result_display.append(f"   📸 标注截图显示失败: {str(e)}")
+            
+            # 显示UI元素信息（如果还没有显示的话）
+            if ui_elements:
+                self.result_display.append(f"   🔍 UI元素总数: {len(ui_elements)}个")
+                try:
+                    self.update_elements_table(ui_elements)
+                except Exception as e:
+                    self.result_display.append(f"   ⚠️ UI元素表格更新失败: {str(e)}")
+            
+            self.result_display.append(f"🏁 任务处理流程完成")
+            
+        except Exception as e:
+            self.result_display.append(f"❌ 处理最终结果时出错: {str(e)}")
+            print(f"on_task_completed error: {e}")
+            import traceback
+            traceback.print_exc()
+        finally:
+            # 无论成功还是失败，都要重置UI状态
+            self.status_label.setText("任务完成")
+            self.send_task_btn.setEnabled(True)
     
     def on_omniparser_result(self, response):
         """处理OmniParser结果"""
