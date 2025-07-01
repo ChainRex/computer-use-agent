@@ -189,14 +189,17 @@ class ClaudeService:
             str: Claude响应
         """
         try:
+            # 将图片路径包含在prompt中
+            full_prompt = f"{prompt}\n\n图片路径: {image_path}"
+            
             # 构建Claude命令
             cmd = [
                 "claude",
-                "-p", prompt,
-                image_path
+                "-p",
+                full_prompt
             ]
             
-            logger.debug(f"Executing Claude command: {' '.join(cmd)}")
+            logger.debug(f"Executing Claude command: {' '.join(cmd[:2])} [prompt with image path]")
             
             # 执行命令（5分钟超时）
             result = subprocess.run(
