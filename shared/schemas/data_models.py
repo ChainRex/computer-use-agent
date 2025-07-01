@@ -139,5 +139,6 @@ class CompletionVerificationResponse(BaseModel):
     status: CompletionStatus
     reasoning: str
     confidence: float  # 0.0-1.0
-    next_steps: Optional[str] = None  # 如果未完成，建议的下一步操作
+    next_steps: Optional[str] = None  # 如果未完成，建议的下一步操作（文字描述）
+    next_actions: Optional[List[ActionPlan]] = None  # 如果未完成，具体的操作指令
     verification_time: Optional[float] = None

@@ -373,6 +373,7 @@ async def handle_simple_completion_verification(message: dict, websocket: WebSoc
                     reasoning=f"验证过程发生异常: {str(e)}",
                     confidence=0.0,
                     next_steps="请检查系统状态后重试",
+                    next_actions=None,
                     verification_time=0.0
                 )
                 
@@ -390,6 +391,7 @@ async def handle_simple_completion_verification(message: dict, websocket: WebSoc
                 reasoning="Claude服务不可用，无法进行智能验证",
                 confidence=0.0,
                 next_steps="请确保Claude服务正常运行",
+                next_actions=None,
                 verification_time=0.0
             )
             

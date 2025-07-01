@@ -267,8 +267,9 @@ class ClaudeService:
                 # 解析响应
                 status, reasoning, confidence = self._parse_completion_response(claude_response)
                 
-                # 提取next_steps
+                # 提取next_steps和next_actions
                 next_steps = self._extract_next_steps_from_response(claude_response, status)
+                next_actions = self._extract_next_actions_from_response(claude_response, status)
                 
                 verification_time = time.time() - start_time
                 
@@ -278,6 +279,7 @@ class ClaudeService:
                     reasoning=reasoning,
                     confidence=confidence,
                     next_steps=next_steps,
+                    next_actions=next_actions,
                     verification_time=verification_time
                 )
                 
@@ -515,27 +517,51 @@ JSON格式要求:
 1. 请仔细对比原始用户指令和当前屏幕状态
 2. 判断用户的原始需求是否已经得到满足
 3. 考虑计划的操作是否成功执行并产生了预期结果
-4. 如果任务未完成，分析还需要什么操作
+4. 如果任务未完成，分析还需要什么操作，并生成具体的pyautogui操作指令
 
 请严格按照以下JSON格式回复，不要添加任何额外的文本或注释:
 {{
     "status": "completed",
     "confidence": 0.9,
     "reasoning": "详细说明你的判断理由，包括对屏幕状态的分析，不要使用双引号",
-    "next_steps": "如果未完成，请描述建议的下一步操作；如果已完成，设为null"
+    "next_steps": "如果未完成，请描述建议的下一步操作；如果已完成，设为null",
+    "next_actions": [
+        {{
+            "type": "click",
+            "description": "具体操作描述，不要使用双引号",
+            "element_id": "UI元素ID或null"
+        }},
+        {{
+            "type": "key", 
+            "description": "按键操作描述，不要使用双引号",
+            "text": "按键组合如cmd+space"
+        }},
+        {{
+            "type": "type",
+            "description": "输入操作描述，不要使用双引号",
+            "text": "要输入的文本"
+        }}
+    ]
 }}
 
 **状态值说明:**
-- completed: 用户的原始需求已经完全满足
-- incomplete: 部分完成但还需要继续操作
-- failed: 操作失败或结果不符合预期
-- unclear: 无法从当前信息判断任务状态
+- completed: 用户的原始需求已经完全满足（next_actions设为null）
+- incomplete: 部分完成但还需要继续操作（必须提供next_actions）
+- failed: 操作失败或结果不符合预期（必须提供next_actions来重新执行）
+- unclear: 无法从当前信息判断任务状态（可提供next_actions来确认状态）
+
+**next_actions操作类型说明:**
+- click: 点击操作，提供element_id（引用检测到的UI元素）或坐标coordinates
+- type: 文本输入操作，提供text字段
+- key: 按键操作，提供按键组合text（如cmd+space, enter, tab等）
+- wait: 等待操作，提供duration字段（秒）
 
 **JSON格式要求:**
 1. 只输出JSON，不要添加任何说明文字或markdown标记
-2. reasoning和next_steps字段中不要使用双引号，用单引号或中文标点
+2. reasoning、next_steps和description字段中不要使用双引号，用单引号或中文标点
 3. 确保JSON格式完全有效
 4. confidence值必须在0.0到1.0之间
+5. 如果status不是completed，必须提供具体的next_actions操作步骤来继续完成任务
 
 请基于任务上下文和当前屏幕截图进行客观、准确的判断。"""
 
@@ -851,6 +877,67 @@ JSON格式要求:
             return "请检查操作是否正确，必要时重新执行任务"
         elif status == "unclear":
             return "请检查当前屏幕状态，确认任务执行情况"
+        
+        return None
+    
+    def _extract_next_actions_from_response(self, response: str, status: str) -> Optional[List[ActionPlan]]:
+        """
+        从Claude响应中提取next_actions操作指令
+        
+        Args:
+            response: Claude响应文本
+            status: 任务状态
+            
+        Returns:
+            Optional[List[ActionPlan]]: 下一步操作指令列表
+        """
+        try:
+            # 如果任务已完成，不需要后续操作
+            if status == "completed":
+                return None
+                
+            # 尝试从JSON中提取next_actions
+            json_start = response.find('{')
+            json_end = response.rfind('}') + 1
+            
+            if json_start >= 0 and json_end > json_start:
+                json_str = response[json_start:json_end]
+                response_data = json.loads(json_str)
+                next_actions_data = response_data.get("next_actions")
+                
+                # 如果next_actions为null或空列表，返回None
+                if not next_actions_data:
+                    return None
+                
+                # 转换为ActionPlan对象
+                actions = []
+                for action_data in next_actions_data:
+                    action = ActionPlan(
+                        type=action_data.get("type", ""),
+                        description=action_data.get("description", ""),
+                        element_id=action_data.get("element_id"),
+                        coordinates=action_data.get("coordinates"),
+                        text=action_data.get("text"),
+                        duration=action_data.get("duration"),
+                        keys=action_data.get("keys")
+                    )
+                    actions.append(action)
+                
+                logger.info(f"Extracted {len(actions)} next actions from verification response")
+                return actions
+            
+        except Exception as e:
+            logger.debug(f"Failed to extract next_actions from JSON: {e}")
+        
+        # 降级处理：根据状态生成默认操作
+        if status in ["incomplete", "failed", "unclear"]:
+            return [
+                ActionPlan(
+                    type="wait",
+                    description="等待用户手动操作或重新分析任务",
+                    duration=1.0
+                )
+            ]
         
         return None
     

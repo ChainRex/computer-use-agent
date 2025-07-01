@@ -33,7 +33,8 @@ class CompletionCheckResult:
     status: TaskStatus
     confidence: float            # 置信度 (0.0-1.0)
     reasoning: str              # 判断理由
-    next_steps: Optional[str]   # 如果未完成，建议的下一步操作
+    next_steps: Optional[str]   # 如果未完成，建议的下一步操作（文字描述）
+    next_actions: Optional[List] = None  # 如果未完成，具体的操作指令
     screenshot_path: Optional[str] = None  # 保留兼容性
     screenshot_base64: Optional[str] = None  # 截图的base64数据
     verification_prompt: Optional[str] = None  # 验证提示词
@@ -124,6 +125,7 @@ class TaskCompletionChecker:
                     confidence=0.0,
                     reasoning="截图失败，无法验证任务完成状态",
                     next_steps="请手动检查任务执行结果",
+                    next_actions=None,
                     check_time=time.time() - start_time
                 )
             
@@ -141,6 +143,7 @@ class TaskCompletionChecker:
                 confidence=0.0,
                 reasoning="等待Claude分析任务完成状态...",
                 next_steps=None,
+                next_actions=None,
                 screenshot_path=None,  # 不需要保存文件
                 screenshot_base64=screenshot_base64,  # 直接包含截图数据
                 verification_prompt=prompt,  # 包含验证提示词
@@ -211,6 +214,7 @@ class TaskCompletionChecker:
                 confidence=confidence,
                 reasoning=reasoning,
                 next_steps=next_steps,
+                next_actions=None,
                 check_time=check_time
             )
             
@@ -222,6 +226,7 @@ class TaskCompletionChecker:
                 confidence=0.0,
                 reasoning=f"响应解析失败: {str(e)}",
                 next_steps="请重新检查任务状态",
+                next_actions=None,
                 check_time=check_time
             )
     
@@ -251,6 +256,7 @@ class TaskCompletionChecker:
                     confidence=0.0,
                     reasoning="截图失败，无法验证任务完成状态",
                     next_steps="请手动检查任务执行结果",
+                    next_actions=None,
                     check_time=time.time() - start_time
                 )
             
@@ -267,6 +273,7 @@ class TaskCompletionChecker:
                 confidence=0.0,
                 reasoning="等待简化接口分析任务完成状态...",
                 next_steps=None,
+                next_actions=None,
                 screenshot_path=None,
                 screenshot_base64=screenshot_base64,
                 verification_prompt=None,  # 简化接口不需要提示词
@@ -316,6 +323,7 @@ class TaskCompletionChecker:
                 confidence=response.confidence,
                 reasoning=response.reasoning,
                 next_steps=response.next_steps,
+                next_actions=response.next_actions,  # 添加操作指令
                 check_time=check_time + (response.verification_time or 0.0)
             )
             
@@ -327,6 +335,7 @@ class TaskCompletionChecker:
                 confidence=0.0,
                 reasoning=f"响应解析失败: {str(e)}",
                 next_steps="请重新检查任务状态",
+                next_actions=None,
                 check_time=check_time
             )
     
