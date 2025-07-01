@@ -141,29 +141,29 @@ class ClaudeService:
 检测到的UI元素:
 {elements_text}
 
-请提供JSON格式的响应，包含以下字段:
+请严格按照以下JSON格式输出，不要添加任何额外的文本或注释:
 {{
-    "reasoning": "你的分析推理过程",
+    "reasoning": "简短的分析推理过程，不要使用双引号",
     "confidence": 0.8,
     "actions": [
         {{
             "type": "click",
-            "description": "点击描述",
-            "element_id": "UI元素的ID（必须使用上面检测到的元素ID）"
+            "description": "点击描述，不要使用双引号",
+            "element_id": "UI元素的ID"
         }},
         {{
             "type": "type",
-            "description": "输入描述", 
+            "description": "输入描述，不要使用双引号", 
             "text": "要输入的文本"
         }},
         {{
             "type": "key",
-            "description": "按键描述",
-            "text": "按键组合，如'ctrl+c'或'enter'"
+            "description": "按键描述，不要使用双引号",
+            "text": "按键组合如ctrl+c或enter"
         }},
         {{
             "type": "wait",
-            "description": "等待描述",
+            "description": "等待描述，不要使用双引号",
             "duration": 1.0
         }}
     ]
@@ -175,13 +175,12 @@ class ClaudeService:
 - key: 按键操作，需要提供按键组合text
 - wait: 等待操作，需要提供duration（秒）
 
-重要要求:
-1. 对于点击操作，必须使用element_id引用上面列出的UI元素，不要直接提供坐标
-2. 仔细分析用户指令，选择最合适的UI元素ID
-3. 操作步骤逻辑正确且可执行
-4. 考虑操作之间的时序关系
-5. 提供清晰的操作描述
-6. 如果没有合适的UI元素可以点击，请在reasoning中说明原因"""
+JSON格式要求:
+1. 只输出JSON，不要添加任何说明文字或markdown标记
+2. reasoning和description字段中不要使用双引号，用单引号或中文标点
+3. 确保JSON格式完全有效
+4. 对于点击操作，必须使用element_id引用上面列出的UI元素
+5. 如果没有合适的UI元素可以点击，在reasoning中说明并提供替代方案"""
 
         return prompt
     
@@ -432,6 +431,19 @@ class ClaudeService:
             response = re.sub(r'```json\s*', '', response)
             response = re.sub(r'```\s*$', '', response)
             
+            # 修复JSON中的引号问题
+            # 1. 先找到reasoning字段的内容
+            reasoning_match = re.search(r'"reasoning":\s*"([^"]*(?:"[^"]*"[^"]*)*)"', response)
+            if reasoning_match:
+                reasoning_content = reasoning_match.group(1)
+                # 转义reasoning内容中的双引号
+                escaped_reasoning = reasoning_content.replace('"', '\\"')
+                response = response.replace(reasoning_match.group(0), f'"reasoning": "{escaped_reasoning}"')
+            
+            # 2. 处理description字段中的引号问题
+            response = re.sub(r'"description":\s*"([^"]*)"([^"]*)"([^"]*)"', 
+                            r'"description": "\1\\"\2\\"\3"', response)
+            
             # 移除响应开头的说明文字
             lines = response.strip().split('\n')
             json_start_line = -1
@@ -449,14 +461,30 @@ class ClaudeService:
                 # 尝试找到JSON结束位置
                 brace_count = 0
                 json_end = -1
+                in_string = False
+                escape_next = False
+                
                 for i, char in enumerate(cleaned_response):
-                    if char == '{':
-                        brace_count += 1
-                    elif char == '}':
-                        brace_count -= 1
-                        if brace_count == 0:
-                            json_end = i + 1
-                            break
+                    if escape_next:
+                        escape_next = False
+                        continue
+                    
+                    if char == '\\':
+                        escape_next = True
+                        continue
+                    
+                    if char == '"' and not escape_next:
+                        in_string = not in_string
+                        continue
+                    
+                    if not in_string:
+                        if char == '{':
+                            brace_count += 1
+                        elif char == '}':
+                            brace_count -= 1
+                            if brace_count == 0:
+                                json_end = i + 1
+                                break
                 
                 if json_end > 0:
                     cleaned_response = cleaned_response[:json_end]
