@@ -482,10 +482,16 @@ JSON格式要求:
 - unclear: 无法从当前信息判断任务状态（可提供next_actions来确认状态）
 
 **next_actions操作类型说明:**
-- click: 点击操作，提供element_id（引用检测到的UI元素）或坐标coordinates
-- type: 文本输入操作，提供text字段
-- key: 按键操作，提供按键组合text（如cmd+space, enter, tab等）
-- wait: 等待操作，提供duration字段（秒）
+- click: 点击操作，格式{"type": "click", "description": "点击描述", "element_id": UI元素ID或null, "coordinates": [x,y]坐标数组或null}
+- type: 文本输入操作，格式{"type": "type", "description": "输入描述", "text": "要输入的文本"}
+- key: 按键操作，格式{"type": "key", "description": "按键描述", "text": "按键组合如cmd+space"}
+- wait: 等待操作，格式{"type": "wait", "description": "等待描述", "duration": 等待秒数}
+
+**重要提示:**
+- 优先使用检测到的UI元素ID进行点击操作
+- 对于macOS系统，使用cmd键而不是ctrl键
+- 按键组合用加号连接，如"cmd+space", "cmd+tab"
+- 确保操作序列逻辑正确，能够完成指定任务
 
 **JSON格式要求:**
 1. 只输出JSON，不要添加任何说明文字或markdown标记
@@ -575,10 +581,16 @@ JSON格式要求:
 - unclear: 无法从当前信息判断任务状态（可提供next_actions来确认状态）
 
 **next_actions操作类型说明:**
-- click: 点击操作，提供element_id（引用检测到的UI元素）或坐标coordinates
-- type: 文本输入操作，提供text字段
-- key: 按键操作，提供按键组合text（如cmd+space, enter, tab等）
-- wait: 等待操作，提供duration字段（秒）
+- click: 点击操作，格式{"type": "click", "description": "点击描述", "element_id": UI元素ID或null, "coordinates": [x,y]坐标数组或null}
+- type: 文本输入操作，格式{"type": "type", "description": "输入描述", "text": "要输入的文本"}
+- key: 按键操作，格式{"type": "key", "description": "按键描述", "text": "按键组合如cmd+space"}
+- wait: 等待操作，格式{"type": "wait", "description": "等待描述", "duration": 等待秒数}
+
+**重要提示:**
+- 优先使用检测到的UI元素ID进行点击操作
+- 对于macOS系统，使用cmd键而不是ctrl键
+- 按键组合用加号连接，如"cmd+space", "cmd+tab"
+- 确保操作序列逻辑正确，能够完成指定任务
 
 **JSON格式要求:**
 1. 只输出JSON，不要添加任何说明文字或markdown标记
@@ -1140,6 +1152,7 @@ JSON格式要求:
             reasoning = response_data.get("reasoning", "")
             confidence = float(response_data.get("confidence", 0.0))
             next_steps = response_data.get("next_steps")
+            next_actions = response_data.get("next_actions")  # 直接从Claude响应中获取
             
             # 验证状态值
             valid_statuses = ["completed", "incomplete", "failed", "unclear"]
@@ -1150,12 +1163,7 @@ JSON格式要求:
             # 验证置信度范围
             confidence = max(0.0, min(1.0, confidence))
             
-            # 如果状态为incomplete且有next_steps，尝试生成next_actions
-            next_actions = None
-            if status == "incomplete" and next_steps:
-                next_actions = self._generate_next_actions_from_steps(next_steps)
-            
-            logger.info(f"Enhanced completion parsing: status={status}, confidence={confidence:.2f}, has_next_steps={next_steps is not None}, has_next_actions={next_actions is not None}")
+            logger.info(f"Enhanced completion parsing: status={status}, confidence={confidence:.2f}, has_next_steps={next_steps is not None}, has_next_actions={next_actions is not None and len(next_actions) > 0 if next_actions else False}")
             return status, reasoning, confidence, next_steps, next_actions
             
         except json.JSONDecodeError as e:
@@ -1173,9 +1181,8 @@ JSON格式要求:
             # 降级处理：基于文本内容判断
             status, reasoning, confidence = self._extract_completion_from_text(response)
             next_steps = self._extract_next_steps_from_text(response, status)
+            # 降级情况下不生成具体操作，让用户手动处理
             next_actions = None
-            if status == "incomplete" and next_steps:
-                next_actions = self._generate_next_actions_from_steps(next_steps)
             
             return status, reasoning, confidence, next_steps, next_actions
         except Exception as e:
@@ -1212,50 +1219,6 @@ JSON格式要求:
         # 如果没有找到特定模式，返回通用建议
         return "继续执行原始任务指令"
     
-    def _generate_next_actions_from_steps(self, next_steps: str) -> List[Dict]:
-        """
-        从next_steps文本生成具体的next_actions
-        
-        Args:
-            next_steps: 下一步操作建议文本
-            
-        Returns:
-            List[Dict]: 具体操作指令列表
-        """
-        actions = []
-        
-        # 分析next_steps文本，生成具体操作
-        if "spotlight" in next_steps.lower() or "cmd+space" in next_steps.lower():
-            actions.append({
-                "type": "hotkey",
-                "description": "打开Spotlight搜索",
-                "keys": ["cmd", "space"],
-                "duration": 0.5
-            })
-        
-        if "calculator" in next_steps.lower() or "计算器" in next_steps:
-            actions.append({
-                "type": "type",
-                "description": "输入calculator搜索计算器",
-                "text": "calculator",
-                "duration": 1.0
-            })
-            actions.append({
-                "type": "hotkey", 
-                "description": "按Enter键打开计算器",
-                "keys": ["enter"],
-                "duration": 0.5
-            })
-        
-        # 如果没有生成具体操作，添加通用操作
-        if not actions:
-            actions.append({
-                "type": "wait",
-                "description": f"执行建议的操作: {next_steps}",
-                "duration": 2.0
-            })
-        
-        return actions
     
     def cleanup(self):
         """清理临时文件（保留img目录）"""
