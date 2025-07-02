@@ -727,6 +727,12 @@ JSON格式要求:
                 logger.debug(f"Claude raw response length: {len(response)}")
                 logger.debug(f"Claude raw response preview: {response[:200]}...")  # 打印前200字符用于调试
                 
+                # 如果响应包含CLI消息，记录更详细的信息用于调试
+                cli_messages = ["Welcome to Claude Code", "🌟", "You are using the canonical relay", "Execution error"]
+                if any(msg in response for msg in cli_messages):
+                    logger.warning(f"Claude CLI interface detected in response: {response[:500]}")
+                    logger.info("This will trigger retry mechanism")
+                
                 if not response:
                     logger.warning("Claude returned empty response")
                     raise RuntimeError("Claude returned empty response")
