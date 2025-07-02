@@ -170,7 +170,7 @@ class ClaudeService:
         previous_claude_output: str,
         screenshot_base64: str,
         verification_prompt: str = None
-    ) -> Tuple[str, str, float]:
+    ) -> Tuple[str, str, float, Optional[str], Optional[List[Dict]]]:
         """
         使用Claude验证任务完成度（使用base64截图数据）
         
@@ -181,7 +181,7 @@ class ClaudeService:
             verification_prompt: 可选的自定义验证提示词
             
         Returns:
-            Tuple[str, str, float]: (状态, 推理过程, 置信度)
+            Tuple[str, str, float, Optional[str], Optional[List[Dict]]]: (状态, 推理过程, 置信度, 下一步建议, 下一步操作)
         """
         try:
             # 如果没有提供自定义提示词，使用默认的构建方法
@@ -200,10 +200,10 @@ class ClaudeService:
                 # 执行Claude命令（带重试机制）
                 claude_response = self._execute_claude_command_with_retry(verification_prompt, temp_filepath)
                 
-                # 解析Claude响应
-                status, reasoning, confidence = self._parse_completion_response(claude_response)
+                # 解析Claude响应（增强版，支持next_steps和next_actions）
+                status, reasoning, confidence, next_steps, next_actions = self._parse_completion_response_enhanced(claude_response)
                 
-                return status, reasoning, confidence
+                return status, reasoning, confidence, next_steps, next_actions
                 
             finally:
                 # 清理临时文件
@@ -448,27 +448,51 @@ JSON格式要求:
 1. 请仔细对比原始用户指令和当前屏幕状态
 2. 判断用户的原始需求是否已经得到满足
 3. 考虑上一轮的操作计划是否成功执行
-4. 如果任务未完成，分析还需要什么操作
+4. 如果任务未完成，分析还需要什么操作，并生成具体的pyautogui操作指令
 
 请严格按照以下JSON格式回复，不要添加任何额外的文本或注释:
 {{
     "status": "completed",
     "confidence": 0.9,
     "reasoning": "详细说明你的判断理由，包括对屏幕状态的分析，不要使用双引号",
-    "next_steps": "如果未完成，请描述建议的下一步操作；如果已完成，设为null"
+    "next_steps": "如果未完成，请描述建议的下一步操作；如果已完成，设为null",
+    "next_actions": [
+        {{
+            "type": "click",
+            "description": "具体操作描述，不要使用双引号",
+            "element_id": "UI元素ID或null"
+        }},
+        {{
+            "type": "key", 
+            "description": "按键操作描述，不要使用双引号",
+            "text": "按键组合如cmd+space"
+        }},
+        {{
+            "type": "type",
+            "description": "输入操作描述，不要使用双引号",
+            "text": "要输入的文本"
+        }}
+    ]
 }}
 
 **状态值说明:**
-- completed: 用户的原始需求已经完全满足
-- incomplete: 部分完成但还需要继续操作
-- failed: 操作失败或结果不符合预期
-- unclear: 无法从当前信息判断任务状态
+- completed: 用户的原始需求已经完全满足（next_actions设为null）
+- incomplete: 部分完成但还需要继续操作（必须提供next_actions）
+- failed: 操作失败或结果不符合预期（必须提供next_actions来重新执行）
+- unclear: 无法从当前信息判断任务状态（可提供next_actions来确认状态）
+
+**next_actions操作类型说明:**
+- click: 点击操作，提供element_id（引用检测到的UI元素）或坐标coordinates
+- type: 文本输入操作，提供text字段
+- key: 按键操作，提供按键组合text（如cmd+space, enter, tab等）
+- wait: 等待操作，提供duration字段（秒）
 
 **JSON格式要求:**
 1. 只输出JSON，不要添加任何说明文字或markdown标记
-2. reasoning和next_steps字段中不要使用双引号，用单引号或中文标点
+2. reasoning、next_steps和description字段中不要使用双引号，用单引号或中文标点
 3. 确保JSON格式完全有效
 4. confidence值必须在0.0到1.0之间
+5. 如果status不是completed，必须提供具体的next_actions操作步骤来继续完成任务
 
 请基于当前屏幕截图进行客观、准确的判断。"""
 
@@ -1085,6 +1109,153 @@ JSON格式要求:
                 duration=1.0
             )
         ]
+    
+    def _parse_completion_response_enhanced(self, response: str) -> Tuple[str, str, float, Optional[str], Optional[List[Dict]]]:
+        """
+        增强版Claude任务完成度验证响应解析（支持next_steps和next_actions）
+        
+        Args:
+            response: Claude响应文本
+            
+        Returns:
+            Tuple[str, str, float, Optional[str], Optional[List[Dict]]]: (状态, 推理过程, 置信度, 下一步建议, 下一步操作)
+        """
+        if not response or response.strip() == "":
+            logger.warning("Claude completion verification response is empty")
+            return "unclear", "Empty response from Claude", 0.0, None, None
+        
+        try:
+            # 先尝试提取JSON部分
+            json_start = response.find('{')
+            json_end = response.rfind('}') + 1
+            
+            if json_start >= 0 and json_end > json_start:
+                json_str = response[json_start:json_end]
+                response_data = json.loads(json_str)
+            else:
+                # 尝试解析整个响应
+                response_data = json.loads(response)
+            
+            status = response_data.get("status", "unclear")
+            reasoning = response_data.get("reasoning", "")
+            confidence = float(response_data.get("confidence", 0.0))
+            next_steps = response_data.get("next_steps")
+            
+            # 验证状态值
+            valid_statuses = ["completed", "incomplete", "failed", "unclear"]
+            if status not in valid_statuses:
+                logger.warning(f"Invalid status: {status}, defaulting to unclear")
+                status = "unclear"
+            
+            # 验证置信度范围
+            confidence = max(0.0, min(1.0, confidence))
+            
+            # 如果状态为incomplete且有next_steps，尝试生成next_actions
+            next_actions = None
+            if status == "incomplete" and next_steps:
+                next_actions = self._generate_next_actions_from_steps(next_steps)
+            
+            logger.info(f"Enhanced completion parsing: status={status}, confidence={confidence:.2f}, has_next_steps={next_steps is not None}, has_next_actions={next_actions is not None}")
+            return status, reasoning, confidence, next_steps, next_actions
+            
+        except json.JSONDecodeError as e:
+            logger.warning(f"Failed to parse enhanced completion response as JSON: {e}")
+            logger.warning(f"Raw response: {response[:500]}...")
+            
+            # 尝试清理响应并重新解析
+            cleaned_response = self._clean_claude_response(response)
+            if cleaned_response != response:
+                try:
+                    return self._parse_completion_response_enhanced(cleaned_response)
+                except Exception:
+                    pass
+            
+            # 降级处理：基于文本内容判断
+            status, reasoning, confidence = self._extract_completion_from_text(response)
+            next_steps = self._extract_next_steps_from_text(response, status)
+            next_actions = None
+            if status == "incomplete" and next_steps:
+                next_actions = self._generate_next_actions_from_steps(next_steps)
+            
+            return status, reasoning, confidence, next_steps, next_actions
+        except Exception as e:
+            logger.error(f"Error parsing enhanced completion response: {str(e)}")
+            return "unclear", f"Parsing error: {str(e)}", 0.0, None, None
+    
+    def _extract_next_steps_from_text(self, response: str, status: str) -> Optional[str]:
+        """
+        从文本响应中提取next_steps信息
+        
+        Args:
+            response: Claude响应文本
+            status: 任务状态
+            
+        Returns:
+            Optional[str]: 下一步操作建议
+        """
+        if status != "incomplete":
+            return None
+        
+        # 查找包含下一步建议的常见模式
+        patterns = [
+            r"建议下一步[：:]\s*(.+)",
+            r"下一步[操作行动][：:]\s*(.+)",
+            r"需要[：:]\s*(.+)",
+            r"建议[：:]\s*(.+)",
+        ]
+        
+        for pattern in patterns:
+            match = re.search(pattern, response, re.IGNORECASE)
+            if match:
+                return match.group(1).strip()
+        
+        # 如果没有找到特定模式，返回通用建议
+        return "继续执行原始任务指令"
+    
+    def _generate_next_actions_from_steps(self, next_steps: str) -> List[Dict]:
+        """
+        从next_steps文本生成具体的next_actions
+        
+        Args:
+            next_steps: 下一步操作建议文本
+            
+        Returns:
+            List[Dict]: 具体操作指令列表
+        """
+        actions = []
+        
+        # 分析next_steps文本，生成具体操作
+        if "spotlight" in next_steps.lower() or "cmd+space" in next_steps.lower():
+            actions.append({
+                "type": "hotkey",
+                "description": "打开Spotlight搜索",
+                "keys": ["cmd", "space"],
+                "duration": 0.5
+            })
+        
+        if "calculator" in next_steps.lower() or "计算器" in next_steps:
+            actions.append({
+                "type": "type",
+                "description": "输入calculator搜索计算器",
+                "text": "calculator",
+                "duration": 1.0
+            })
+            actions.append({
+                "type": "hotkey", 
+                "description": "按Enter键打开计算器",
+                "keys": ["enter"],
+                "duration": 0.5
+            })
+        
+        # 如果没有生成具体操作，添加通用操作
+        if not actions:
+            actions.append({
+                "type": "wait",
+                "description": f"执行建议的操作: {next_steps}",
+                "duration": 2.0
+            })
+        
+        return actions
     
     def cleanup(self):
         """清理临时文件（保留img目录）"""

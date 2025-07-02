@@ -274,7 +274,7 @@ async def handle_task_completion_verification(message: dict, websocket: WebSocke
         if claude_service:
             try:
                 print("🔍 使用Claude验证任务完成度...")
-                status, reasoning, confidence = claude_service.verify_task_completion_with_base64(
+                status, reasoning, confidence, next_steps, next_actions = claude_service.verify_task_completion_with_base64(
                     original_command,
                     previous_claude_output,
                     screenshot_base64,
@@ -282,6 +282,10 @@ async def handle_task_completion_verification(message: dict, websocket: WebSocke
                 )
                 
                 print(f"✅ 任务完成度验证结果: {status} (置信度: {confidence:.2f})")
+                if next_steps:
+                    print(f"📝 下一步建议: {next_steps}")
+                if next_actions:
+                    print(f"⚡ 生成了 {len(next_actions)} 个具体操作指令")
                 
                 # 构建响应数据
                 verification_result = {
@@ -289,7 +293,9 @@ async def handle_task_completion_verification(message: dict, websocket: WebSocke
                     "status": status,
                     "reasoning": reasoning,
                     "confidence": confidence,
-                    "verification_time": time.time()
+                    "verification_time": time.time(),
+                    "next_steps": next_steps,
+                    "next_actions": next_actions
                 }
                 
                 return {
