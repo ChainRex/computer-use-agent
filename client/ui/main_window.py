@@ -1156,9 +1156,17 @@ class MainWindow(QMainWindow):
                     for i, action in enumerate(next_actions, 1):
                         action_type = action.get('type', 'unknown')
                         action_desc = action.get('description', '无描述')
+                        element_id = action.get('element_id')
+                        coordinates = action.get('coordinates')
                         action_text = action.get('text', '')
                         
                         action_line = f"  {i}. <b>{action_type.upper()}</b>: {action_desc}"
+                        
+                        # 添加元素ID和坐标显示
+                        if element_id:
+                            action_line += f" [元素ID: {element_id}]"
+                        if coordinates:
+                            action_line += f" [坐标: {coordinates}]"
                         if action_text:
                             action_line += f" ('{action_text}')"
                         

@@ -24,15 +24,16 @@ class TaskMemory:
     def __init__(self):
         self.task_contexts: Dict[str, Dict] = {}
     
-    def save_task_context(self, task_id: str, original_command: str, actions: List[ActionPlan], reasoning: str):
+    def save_task_context(self, task_id: str, original_command: str, actions: List[ActionPlan], reasoning: str, ui_elements: Optional[List[UIElement]] = None):
         """保存任务上下文"""
         self.task_contexts[task_id] = {
             'original_command': original_command,
             'actions': actions,
             'reasoning': reasoning,
+            'ui_elements': ui_elements or [],
             'created_at': time.time()
         }
-        logger.info(f"Saved context for task {task_id}")
+        logger.info(f"Saved context for task {task_id} with {len(ui_elements) if ui_elements else 0} UI elements")
     
     def get_task_context(self, task_id: str) -> Optional[Dict]:
         """获取任务上下文"""
@@ -120,7 +121,7 @@ class ClaudeService:
             
             # 保存到记忆模块
             if task_id:
-                self.memory.save_task_context(task_id, text_command, actions, reasoning)
+                self.memory.save_task_context(task_id, text_command, actions, reasoning, ui_elements)
             
             return actions, reasoning, confidence
             
@@ -264,12 +265,9 @@ class ClaudeService:
                 # 执行Claude命令
                 claude_response = self._execute_claude_command_with_retry(prompt, temp_filepath)
                 
-                # 解析响应
-                status, reasoning, confidence = self._parse_completion_response(claude_response)
-                
-                # 提取next_steps和next_actions
-                next_steps = self._extract_next_steps_from_response(claude_response, status)
-                next_actions = self._extract_next_actions_from_response(claude_response, status)
+                # 解析响应（使用增强版解析器，支持坐标提取）
+                ui_elements = task_context.get('ui_elements', [])
+                status, reasoning, confidence, next_steps, next_actions = self._parse_completion_response_enhanced(claude_response, ui_elements)
                 
                 verification_time = time.time() - start_time
                 
@@ -706,6 +704,46 @@ JSON格式要求:
             logger.error(f"Error executing Claude command: {str(e)}")
             raise
     
+    def _extract_coordinates_from_element_id(self, element_id: str, ui_elements: List[UIElement]) -> Optional[List[int]]:
+        """
+        根据元素ID从UI元素列表中提取边界框中心点坐标
+        
+        Args:
+            element_id: 元素ID（字符串形式，需转换为整数）
+            ui_elements: UI元素列表
+            
+        Returns:
+            Optional[List[int]]: [x, y] 中心点坐标，如果未找到则返回None
+        """
+        if not element_id or not ui_elements:
+            return None
+            
+        try:
+            # 元素ID可能是字符串，需要转换为整数
+            element_id_int = int(element_id)
+            
+            # 在UI元素列表中查找对应的元素
+            for element in ui_elements:
+                if element.id == element_id_int:
+                    coordinates = element.coordinates
+                    if coordinates and len(coordinates) >= 4:
+                        # 计算边界框中心点
+                        x1, y1, x2, y2 = coordinates[:4]
+                        center_x = int((x1 + x2) / 2)
+                        center_y = int((y1 + y2) / 2)
+                        logger.debug(f"Element {element_id} center coordinates: ({center_x}, {center_y})")
+                        return [center_x, center_y]
+                    else:
+                        logger.warning(f"Element {element_id} has invalid coordinates: {coordinates}")
+                        return None
+            
+            logger.warning(f"Element with ID {element_id} not found in UI elements list")
+            return None
+            
+        except (ValueError, TypeError) as e:
+            logger.warning(f"Invalid element_id format: {element_id}, error: {e}")
+            return None
+    
     def _parse_claude_response(self, response: str, ui_elements: List[UIElement]) -> Tuple[List[ActionPlan], str, float]:
         """
         解析Claude响应，生成ActionPlan列表
@@ -737,11 +775,21 @@ JSON格式要求:
                 # 转换为ActionPlan对象
                 actions = []
                 for action_data in actions_data:
+                    element_id = action_data.get("element_id")
+                    coordinates = action_data.get("coordinates")
+                    
+                    # 如果有element_id但没有coordinates，尝试从UI元素中提取坐标
+                    if element_id and not coordinates:
+                        extracted_coords = self._extract_coordinates_from_element_id(element_id, ui_elements)
+                        if extracted_coords:
+                            coordinates = extracted_coords
+                            logger.debug(f"Extracted coordinates {coordinates} for element_id {element_id}")
+                    
                     action = ActionPlan(
                         type=action_data.get("type", ""),
                         description=action_data.get("description", ""),
-                        element_id=action_data.get("element_id"),
-                        coordinates=action_data.get("coordinates"),
+                        element_id=element_id,
+                        coordinates=coordinates,
                         text=action_data.get("text"),
                         duration=action_data.get("duration")
                     )
@@ -759,11 +807,21 @@ JSON格式要求:
                 
                 actions = []
                 for action_data in actions_data:
+                    element_id = action_data.get("element_id")
+                    coordinates = action_data.get("coordinates")
+                    
+                    # 如果有element_id但没有coordinates，尝试从UI元素中提取坐标
+                    if element_id and not coordinates:
+                        extracted_coords = self._extract_coordinates_from_element_id(element_id, ui_elements)
+                        if extracted_coords:
+                            coordinates = extracted_coords
+                            logger.debug(f"Extracted coordinates {coordinates} for element_id {element_id}")
+                    
                     action = ActionPlan(
                         type=action_data.get("type", ""),
                         description=action_data.get("description", ""),
-                        element_id=action_data.get("element_id"),
-                        coordinates=action_data.get("coordinates"),
+                        element_id=element_id,
+                        coordinates=coordinates,
                         text=action_data.get("text"),
                         duration=action_data.get("duration")
                     )
@@ -1124,12 +1182,13 @@ JSON格式要求:
             )
         ]
     
-    def _parse_completion_response_enhanced(self, response: str) -> Tuple[str, str, float, Optional[str], Optional[List[Dict]]]:
+    def _parse_completion_response_enhanced(self, response: str, ui_elements: Optional[List[UIElement]] = None) -> Tuple[str, str, float, Optional[str], Optional[List[Dict]]]:
         """
         增强版Claude任务完成度验证响应解析（支持next_steps和next_actions）
         
         Args:
             response: Claude响应文本
+            ui_elements: UI元素列表（用于坐标提取）
             
         Returns:
             Tuple[str, str, float, Optional[str], Optional[List[Dict]]]: (状态, 推理过程, 置信度, 下一步建议, 下一步操作)
@@ -1160,6 +1219,30 @@ JSON格式要求:
             next_steps = response_data.get("next_steps")
             next_actions = response_data.get("next_actions")  # 直接从Claude响应中获取
             
+            # 处理next_actions中的element_id，提取坐标信息
+            if next_actions and isinstance(next_actions, list) and ui_elements:
+                processed_actions = []
+                for action_data in next_actions:
+                    if isinstance(action_data, dict):
+                        element_id = action_data.get("element_id")
+                        coordinates = action_data.get("coordinates")
+                        
+                        # 如果有element_id但没有coordinates，尝试从UI元素中提取坐标
+                        if element_id and not coordinates:
+                            extracted_coords = self._extract_coordinates_from_element_id(element_id, ui_elements)
+                            if extracted_coords:
+                                # 创建新的action_data副本，添加坐标信息
+                                action_data = action_data.copy()
+                                action_data["coordinates"] = extracted_coords
+                                logger.debug(f"Enhanced completion: Extracted coordinates {extracted_coords} for element_id {element_id}")
+                        
+                        processed_actions.append(action_data)
+                    else:
+                        processed_actions.append(action_data)
+                
+                next_actions = processed_actions
+                logger.info(f"Enhanced completion: Processed {len(processed_actions)} next_actions with coordinate extraction")
+            
             # 详细记录next_actions信息
             if next_actions is not None:
                 logger.info(f"Claude returned next_actions: {type(next_actions)}, length: {len(next_actions) if isinstance(next_actions, list) else 'N/A'}")
@@ -1189,7 +1272,7 @@ JSON格式要求:
             cleaned_response = self._clean_claude_response(response)
             if cleaned_response != response:
                 try:
-                    return self._parse_completion_response_enhanced(cleaned_response)
+                    return self._parse_completion_response_enhanced(cleaned_response, ui_elements)
                 except Exception:
                     pass
             
