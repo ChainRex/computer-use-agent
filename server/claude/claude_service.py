@@ -660,6 +660,23 @@ JSON格式要求:
                 if len(response.strip()) < 10:
                     raise RuntimeError(f"Claude response too short: {len(response)} chars")
                 
+                # 检测Claude CLI界面消息（应该触发重试）
+                cli_messages = [
+                    "Welcome to Claude Code",
+                    "🌟",
+                    "You are using the canonical relay", 
+                    "If the relay doesn't work",
+                    "Execution error",
+                    "claude --pick-relay"
+                ]
+                
+                if any(msg in response for msg in cli_messages):
+                    raise RuntimeError(f"Claude returned CLI interface message instead of analysis: {response[:100]}")
+                
+                # 验证响应是否包含JSON格式（基本检查）
+                if not ('{' in response and '}' in response):
+                    raise RuntimeError(f"Claude response doesn't contain JSON structure: {response[:100]}")
+                
                 logger.info(f"Claude命令成功 (尝试 {attempt + 1})")
                 return response
                 
