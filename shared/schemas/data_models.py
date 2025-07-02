@@ -129,9 +129,7 @@ class CompletionVerificationRequest(BaseModel):
 class CompletionStatus(str, Enum):
     """任务完成状态"""
     COMPLETED = "completed"
-    INCOMPLETE = "incomplete" 
-    FAILED = "failed"
-    UNCLEAR = "unclear"
+    INCOMPLETE = "incomplete"
 
 class CompletionVerificationResponse(BaseModel):
     """任务完成验证响应"""

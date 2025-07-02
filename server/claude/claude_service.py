@@ -239,7 +239,7 @@ class ClaudeService:
                 logger.warning(f"No context found for task {task_id}")
                 return CompletionVerificationResponse(
                     task_id=task_id,
-                    status=CompletionStatus.UNCLEAR,
+                    status=CompletionStatus.INCOMPLETE,
                     reasoning="无法找到任务上下文信息",
                     confidence=0.0,
                     next_steps="请重新执行任务分析",
@@ -294,7 +294,7 @@ class ClaudeService:
             logger.error(f"Simple completion verification failed for task {task_id}: {str(e)}")
             return CompletionVerificationResponse(
                 task_id=task_id,
-                status=CompletionStatus.UNCLEAR,
+                status=CompletionStatus.INCOMPLETE,
                 reasoning=f"验证过程出错: {str(e)}",
                 confidence=0.0,
                 next_steps="请检查系统状态后重试",
@@ -862,7 +862,7 @@ JSON格式要求:
         """
         if not response or response.strip() == "":
             logger.warning("Claude completion verification response is empty")
-            return "unclear", "Empty response from Claude", 0.0
+            return "incomplete", "Empty response from Claude", 0.0
         
         try:
             # 先尝试提取JSON部分
@@ -876,15 +876,15 @@ JSON格式要求:
                 # 尝试解析整个响应
                 response_data = json.loads(response)
             
-            status = response_data.get("status", "unclear")
+            status = response_data.get("status", "incomplete")
             reasoning = response_data.get("reasoning", "")
             confidence = float(response_data.get("confidence", 0.0))
             
             # 验证状态值
-            valid_statuses = ["completed", "incomplete", "failed", "unclear"]
+            valid_statuses = ["completed", "incomplete"]
             if status not in valid_statuses:
                 logger.warning(f"Invalid status: {status}, defaulting to unclear")
-                status = "unclear"
+                status = "incomplete"
             
             # 验证置信度范围
             confidence = max(0.0, min(1.0, confidence))
@@ -908,7 +908,7 @@ JSON格式要求:
             return self._extract_completion_from_text(response)
         except Exception as e:
             logger.error(f"Error parsing completion response: {str(e)}")
-            return "unclear", f"Parsing error: {str(e)}", 0.0
+            return "incomplete", f"Parsing error: {str(e)}", 0.0
     
     def _extract_completion_from_text(self, response: str) -> Tuple[str, str, float]:
         """
@@ -928,9 +928,9 @@ JSON格式要求:
         elif "incomplete" in response_lower or "未完成" in response:
             return "incomplete", "基于文本分析：任务未完成", 0.6
         elif "failed" in response_lower or "失败" in response:
-            return "failed", "基于文本分析：任务执行失败", 0.6
+            return "incomplete", "基于文本分析：任务执行失败", 0.6
         else:
-            return "unclear", f"无法从文本中确定状态: {response[:100]}...", 0.3
+            return "incomplete", f"无法从文本中确定状态: {response[:100]}...", 0.3
     
     def _extract_next_steps_from_response(self, response: str, status: str) -> Optional[str]:
         """
@@ -969,10 +969,6 @@ JSON格式要求:
         # 降级处理：根据状态提供默认建议
         if status == "incomplete":
             return "请继续执行剩余操作或检查当前操作结果"
-        elif status == "failed":
-            return "请检查操作是否正确，必要时重新执行任务"
-        elif status == "unclear":
-            return "请检查当前屏幕状态，确认任务执行情况"
         
         return None
     
@@ -1026,7 +1022,7 @@ JSON格式要求:
             logger.debug(f"Failed to extract next_actions from JSON: {e}")
         
         # 降级处理：根据状态生成默认操作
-        if status in ["incomplete", "failed", "unclear"]:
+        if status in ["incomplete"]:
             return [
                 ActionPlan(
                     type="wait",
@@ -1195,7 +1191,7 @@ JSON格式要求:
         """
         if not response or response.strip() == "":
             logger.warning("Claude completion verification response is empty")
-            return "unclear", "Empty response from Claude", 0.0, None, None
+            return "incomplete", "Empty response from Claude", 0.0, None, None
         
         try:
             # 先尝试提取JSON部分
@@ -1213,7 +1209,7 @@ JSON格式要求:
             logger.info(f"Claude verification response keys: {list(response_data.keys())}")
             logger.debug(f"Claude verification full response: {response_data}")
             
-            status = response_data.get("status", "unclear")
+            status = response_data.get("status", "incomplete")
             reasoning = response_data.get("reasoning", "")
             confidence = float(response_data.get("confidence", 0.0))
             next_steps = response_data.get("next_steps")
@@ -1252,10 +1248,10 @@ JSON格式要求:
                 logger.warning("Claude did not return next_actions field")
             
             # 验证状态值
-            valid_statuses = ["completed", "incomplete", "failed", "unclear"]
+            valid_statuses = ["completed", "incomplete"]
             if status not in valid_statuses:
                 logger.warning(f"Invalid status: {status}, defaulting to unclear")
-                status = "unclear"
+                status = "incomplete"
             
             # 验证置信度范围
             confidence = max(0.0, min(1.0, confidence))
@@ -1285,7 +1281,7 @@ JSON格式要求:
             return status, reasoning, confidence, next_steps, next_actions
         except Exception as e:
             logger.error(f"Error parsing enhanced completion response: {str(e)}")
-            return "unclear", f"Parsing error: {str(e)}", 0.0, None, None
+            return "incomplete", f"Parsing error: {str(e)}", 0.0, None, None
     
     def _extract_next_steps_from_text(self, response: str, status: str) -> Optional[str]:
         """
