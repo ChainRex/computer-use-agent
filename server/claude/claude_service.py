@@ -452,28 +452,31 @@ JSON格式要求:
 
 请严格按照以下JSON格式回复，不要添加任何额外的文本或注释:
 {{
-    "status": "completed",
+    "status": "completed|incomplete|failed|unclear",
     "confidence": 0.9,
     "reasoning": "详细说明你的判断理由，包括对屏幕状态的分析，不要使用双引号",
     "next_steps": "如果未完成，请描述建议的下一步操作；如果已完成，设为null",
     "next_actions": [
         {{
             "type": "click",
-            "description": "具体操作描述，不要使用双引号",
-            "element_id": "UI元素ID或null"
+            "description": "点击操作描述，不要使用双引号",
+            "element_id": "UI元素ID或null",
+            "coordinates": [x, y]
         }},
         {{
-            "type": "key", 
+            "type": "key",
             "description": "按键操作描述，不要使用双引号",
-            "text": "按键组合如cmd+space"
+            "text": "cmd+space"
         }},
         {{
             "type": "type",
-            "description": "输入操作描述，不要使用双引号",
+            "description": "输入操作描述，不要使用双引号", 
             "text": "要输入的文本"
         }}
     ]
 }}
+
+重要：如果status是incomplete、failed或unclear，next_actions数组必须包含至少一个操作！
 
 **状态值说明:**
 - completed: 用户的原始需求已经完全满足（next_actions设为null）
@@ -551,28 +554,31 @@ JSON格式要求:
 
 请严格按照以下JSON格式回复，不要添加任何额外的文本或注释:
 {{
-    "status": "completed",
+    "status": "completed|incomplete|failed|unclear",
     "confidence": 0.9,
     "reasoning": "详细说明你的判断理由，包括对屏幕状态的分析，不要使用双引号",
     "next_steps": "如果未完成，请描述建议的下一步操作；如果已完成，设为null",
     "next_actions": [
         {{
             "type": "click",
-            "description": "具体操作描述，不要使用双引号",
-            "element_id": "UI元素ID或null"
+            "description": "点击操作描述，不要使用双引号",
+            "element_id": "UI元素ID或null",
+            "coordinates": [x, y]
         }},
         {{
-            "type": "key", 
+            "type": "key",
             "description": "按键操作描述，不要使用双引号",
-            "text": "按键组合如cmd+space"
+            "text": "cmd+space"
         }},
         {{
             "type": "type",
-            "description": "输入操作描述，不要使用双引号",
+            "description": "输入操作描述，不要使用双引号", 
             "text": "要输入的文本"
         }}
     ]
 }}
+
+重要：如果status是incomplete、failed或unclear，next_actions数组必须包含至少一个操作！
 
 **状态值说明:**
 - completed: 用户的原始需求已经完全满足（next_actions设为null）
@@ -1148,11 +1154,23 @@ JSON格式要求:
                 # 尝试解析整个响应
                 response_data = json.loads(response)
             
+            # 记录Claude原始响应用于调试
+            logger.info(f"Claude verification response keys: {list(response_data.keys())}")
+            logger.debug(f"Claude verification full response: {response_data}")
+            
             status = response_data.get("status", "unclear")
             reasoning = response_data.get("reasoning", "")
             confidence = float(response_data.get("confidence", 0.0))
             next_steps = response_data.get("next_steps")
             next_actions = response_data.get("next_actions")  # 直接从Claude响应中获取
+            
+            # 详细记录next_actions信息
+            if next_actions is not None:
+                logger.info(f"Claude returned next_actions: {type(next_actions)}, length: {len(next_actions) if isinstance(next_actions, list) else 'N/A'}")
+                if isinstance(next_actions, list) and len(next_actions) > 0:
+                    logger.info(f"First action: {next_actions[0]}")
+            else:
+                logger.warning("Claude did not return next_actions field")
             
             # 验证状态值
             valid_statuses = ["completed", "incomplete", "failed", "unclear"]
@@ -1162,6 +1180,7 @@ JSON格式要求:
             
             # 验证置信度范围
             confidence = max(0.0, min(1.0, confidence))
+            
             
             logger.info(f"Enhanced completion parsing: status={status}, confidence={confidence:.2f}, has_next_steps={next_steps is not None}, has_next_actions={next_actions is not None and len(next_actions) > 0 if next_actions else False}")
             return status, reasoning, confidence, next_steps, next_actions
@@ -1218,7 +1237,6 @@ JSON格式要求:
         
         # 如果没有找到特定模式，返回通用建议
         return "继续执行原始任务指令"
-    
     
     def cleanup(self):
         """清理临时文件（保留img目录）"""
