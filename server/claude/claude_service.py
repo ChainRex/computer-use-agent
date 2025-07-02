@@ -485,10 +485,10 @@ JSON格式要求:
 - unclear: 无法从当前信息判断任务状态（可提供next_actions来确认状态）
 
 **next_actions操作类型说明:**
-- click: 点击操作，格式{"type": "click", "description": "点击描述", "element_id": UI元素ID或null, "coordinates": [x,y]坐标数组或null}
-- type: 文本输入操作，格式{"type": "type", "description": "输入描述", "text": "要输入的文本"}
-- key: 按键操作，格式{"type": "key", "description": "按键描述", "text": "按键组合如cmd+space"}
-- wait: 等待操作，格式{"type": "wait", "description": "等待描述", "duration": 等待秒数}
+- click: 点击操作，格式{{"type": "click", "description": "点击描述", "element_id": "UI元素ID或null", "coordinates": [x,y]}}
+- type: 文本输入操作，格式{{"type": "type", "description": "输入描述", "text": "要输入的文本"}}
+- key: 按键操作，格式{{"type": "key", "description": "按键描述", "text": "按键组合如cmd+space"}}
+- wait: 等待操作，格式{{"type": "wait", "description": "等待描述", "duration": 等待秒数}}
 
 **重要提示:**
 - 优先使用检测到的UI元素ID进行点击操作
@@ -587,10 +587,10 @@ JSON格式要求:
 - unclear: 无法从当前信息判断任务状态（可提供next_actions来确认状态）
 
 **next_actions操作类型说明:**
-- click: 点击操作，格式{"type": "click", "description": "点击描述", "element_id": UI元素ID或null, "coordinates": [x,y]坐标数组或null}
-- type: 文本输入操作，格式{"type": "type", "description": "输入描述", "text": "要输入的文本"}
-- key: 按键操作，格式{"type": "key", "description": "按键描述", "text": "按键组合如cmd+space"}
-- wait: 等待操作，格式{"type": "wait", "description": "等待描述", "duration": 等待秒数}
+- click: 点击操作，格式{{"type": "click", "description": "点击描述", "element_id": "UI元素ID或null", "coordinates": [x,y]}}
+- type: 文本输入操作，格式{{"type": "type", "description": "输入描述", "text": "要输入的文本"}}
+- key: 按键操作，格式{{"type": "key", "description": "按键描述", "text": "按键组合如cmd+space"}}
+- wait: 等待操作，格式{{"type": "wait", "description": "等待描述", "duration": 等待秒数}}
 
 **重要提示:**
 - 优先使用检测到的UI元素ID进行点击操作
