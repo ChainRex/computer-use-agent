@@ -452,7 +452,7 @@ JSON格式要求:
 
 请严格按照以下JSON格式回复，不要添加任何额外的文本或注释:
 {{
-    "status": "completed|incomplete|unclear",
+    "status": "completed|incomplete",
     "confidence": 0.9,
     "reasoning": "详细说明你的判断理由，包括对屏幕状态的分析，不要使用双引号",
     "next_steps": "如果未完成，请描述建议的下一步操作；如果已完成，设为null",
@@ -476,12 +476,11 @@ JSON格式要求:
     ]
 }}
 
-重要：如果status是incomplete或unclear，next_actions数组必须包含至少一个操作！
+重要：如果status是incomplete，next_actions数组必须包含至少一个操作！
 
 **状态值说明:**
 - completed: 用户的原始需求已经完全满足（next_actions设为null）
 - incomplete: 任务未完成或需要继续操作（必须提供next_actions）
-- unclear: 无法从当前信息判断任务状态（可提供next_actions来确认状态）
 
 **next_actions操作类型说明:**
 - click: 点击操作，格式{{"type": "click", "description": "点击描述", "element_id": "UI元素ID或null", "coordinates": [x,y]}}
@@ -553,7 +552,7 @@ JSON格式要求:
 
 请严格按照以下JSON格式回复，不要添加任何额外的文本或注释:
 {{
-    "status": "completed|incomplete|unclear",
+    "status": "completed|incomplete",
     "confidence": 0.9,
     "reasoning": "详细说明你的判断理由，包括对屏幕状态的分析，不要使用双引号",
     "next_steps": "如果未完成，请描述建议的下一步操作；如果已完成，设为null",
@@ -577,12 +576,11 @@ JSON格式要求:
     ]
 }}
 
-重要：如果status是incomplete或unclear，next_actions数组必须包含至少一个操作！
+重要：如果status是incomplete，next_actions数组必须包含至少一个操作！
 
 **状态值说明:**
 - completed: 用户的原始需求已经完全满足（next_actions设为null）
 - incomplete: 任务未完成或需要继续操作（必须提供next_actions）
-- unclear: 无法从当前信息判断任务状态（可提供next_actions来确认状态）
 
 **next_actions操作类型说明:**
 - click: 点击操作，格式{{"type": "click", "description": "点击描述", "element_id": "UI元素ID或null", "coordinates": [x,y]}}
