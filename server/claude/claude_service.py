@@ -87,6 +87,7 @@ class ClaudeService:
         ui_elements: List[UIElement],
         annotated_screenshot_base64: Optional[str] = None,
         os_info: Optional[OSInfo] = None,
+        input_method_info: Optional[Dict] = None,
         task_id: Optional[str] = None
     ) -> Tuple[List[ActionPlan], str, float]:
         """
@@ -98,6 +99,7 @@ class ClaudeService:
             ui_elements: 检测到的UI元素列表
             annotated_screenshot_base64: 标注后的截图base64编码（可选）
             os_info: 操作系统信息
+            input_method_info: 输入法信息
             task_id: 任务ID，用于记忆管理
             
         Returns:
@@ -111,7 +113,7 @@ class ClaudeService:
             )
             
             # 构建Claude分析提示
-            prompt = self._build_analysis_prompt(text_command, ui_elements, os_info)
+            prompt = self._build_analysis_prompt(text_command, ui_elements, os_info, input_method_info)
             
             # 执行Claude命令（带重试机制）
             claude_response = self._execute_claude_command_with_retry(prompt, image_path)
@@ -332,13 +334,15 @@ class ClaudeService:
             logger.error(f"Failed to save image: {str(e)}")
             raise
     
-    def _build_analysis_prompt(self, text_command: str, ui_elements: List[UIElement], os_info: Optional[OSInfo] = None) -> str:
+    def _build_analysis_prompt(self, text_command: str, ui_elements: List[UIElement], os_info: Optional[OSInfo] = None, input_method_info: Optional[Dict] = None) -> str:
         """
         构建Claude分析提示
         
         Args:
             text_command: 用户指令
             ui_elements: UI元素列表
+            os_info: 操作系统信息
+            input_method_info: 输入法信息
             
         Returns:
             str: 分析提示
@@ -362,11 +366,25 @@ class ClaudeService:
             version = getattr(os_info, 'version', '未知')
             os_text = f"{system} {version}"
         
+        # 构建输入法信息
+        input_method_text = ""
+        if input_method_info:
+            current_im = input_method_info.get('current_im', '未知')
+            language = input_method_info.get('language', '未知')
+            is_ime_active = input_method_info.get('is_ime_active', False)
+            available_ims = input_method_info.get('available_ims', [])
+            
+            input_method_text = f"\n当前输入法: {current_im}"
+            input_method_text += f"\n当前语言: {language}"
+            input_method_text += f"\nIME状态: {'激活' if is_ime_active else '未激活'}"
+            if available_ims:
+                input_method_text += f"\n可用输入法: {', '.join(available_ims)}"
+        
         prompt = f"""请分析这个计算机屏幕截图和用户指令，生成详细的pyautogui操作步骤。
 
 用户指令: {text_command}
 
-操作系统: {os_text}
+操作系统: {os_text}{input_method_text}
 
 检测到的UI元素:
 {elements_text}
@@ -416,7 +434,17 @@ JSON格式要求:
 - Windows系统: 使用Windows特定的快捷键(如Win+R, Alt+Tab等)
 - macOS系统: 使用Mac特定的快捷键(如Cmd+Space, Cmd+Tab等)  
 - Linux系统: 使用Linux桌面环境相关的快捷键
-- 根据操作系统调整操作方式和界面元素识别策略"""
+- 根据操作系统调整操作方式和界面元素识别策略
+
+输入法处理要求:
+- 在输入文本前，请检查当前输入法状态是否适合
+- 如果需要输入中文但当前是英文输入法，请先切换到中文输入法
+- 如果需要输入英文但当前是中文输入法，请先切换到英文输入法
+- 使用系统特定的输入法切换快捷键:
+  * Windows: Ctrl+Space 或 Win+Space 切换输入法
+  * macOS: Cmd+Space 或 Control+Space 切换输入法
+  * Linux: Ctrl+Space 或根据系统设置的快捷键
+- 切换后等待0.5秒再开始输入，确保输入法切换完成"""
 
         return prompt
     

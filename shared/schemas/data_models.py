@@ -21,12 +21,22 @@ class OSInfo(BaseModel):
     platform: str
     error: Optional[str] = None
 
+class InputMethodInfo(BaseModel):
+    """输入法信息"""
+    current_im: str  # 当前输入法
+    language: str    # 当前语言
+    layout: str      # 键盘布局
+    available_ims: List[str]  # 可用输入法列表
+    is_ime_active: bool  # 是否为IME输入法激活状态
+    os_name: str     # 操作系统名称
+
 class TaskAnalysisRequest(BaseModel):
     """客户端发送给服务端的任务分析请求"""
     text_command: str
     screenshot_base64: str
     user_id: str = "default"
     os_info: Optional[OSInfo] = None
+    input_method_info: Optional[InputMethodInfo] = None
 
 class ActionType(str, Enum):
     """pyautogui操作类型枚举"""

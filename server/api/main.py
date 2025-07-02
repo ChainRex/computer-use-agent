@@ -183,12 +183,18 @@ async def handle_task_analysis(message: dict, websocket: WebSocket) -> dict:
         if claude_service:
             try:
                 print("🧠 使用Claude进行智能任务分析...")
+                # 准备输入法信息
+                input_method_dict = None
+                if request.input_method_info:
+                    input_method_dict = request.input_method_info.model_dump()
+                
                 actions, reasoning, confidence = claude_service.analyze_task_with_claude(
                     request.text_command,
                     request.screenshot_base64,
                     ui_elements,
                     annotated_screenshot,
                     request.os_info,
+                    input_method_dict,
                     task_id  # 传递task_id给记忆模块
                 )
                 

@@ -378,15 +378,43 @@ class AutomationEngine:
             if len(keys) == 1:
                 pyautogui.press(keys[0])
             else:
-                pyautogui.hotkey(*keys)
+                # 优化组合键处理：按住第一个键，然后按其他键
+                self._execute_sequential_hotkey(keys)
             return True
         return False
+    
+    def _execute_sequential_hotkey(self, keys: List[str]):
+        """
+        顺序执行组合键：先按住第一个键，然后依次按其他键
+        
+        Args:
+            keys: 按键列表
+        """
+        if len(keys) < 2:
+            return
+        
+        # 按住第一个键
+        pyautogui.keyDown(keys[0])
+        
+        try:
+            # 依次按下并释放其他键
+            for key in keys[1:]:
+                pyautogui.keyDown(key)
+                pyautogui.keyUp(key)
+                time.sleep(0.05)  # 小延迟确保按键注册
+        finally:
+            # 确保释放第一个键
+            pyautogui.keyUp(keys[0])
     
     def _execute_hotkey(self, action: ActionPlan) -> bool:
         """执行热键操作"""
         if action.keys:
             mapped_keys = [self.key_mappings.get(key, key) for key in action.keys]
-            pyautogui.hotkey(*mapped_keys)
+            # 使用顺序按键方式执行热键
+            if len(mapped_keys) > 1:
+                self._execute_sequential_hotkey(mapped_keys)
+            else:
+                pyautogui.press(mapped_keys[0])
             return True
         return False
     

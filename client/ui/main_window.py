@@ -137,6 +137,7 @@ class TaskWorker(QThread):
         self.text_command = text_command
         self.screenshot_base64 = screenshot_base64
         self.os_info = self._get_os_info()
+        self.input_method_info = self._get_input_method_info()
     
     def _get_os_info(self):
         """获取操作系统信息"""
@@ -158,6 +159,29 @@ class TaskWorker(QThread):
                 "processor": "Unknown",
                 "platform": "Unknown",
                 "error": str(e)
+            }
+    
+    def _get_input_method_info(self):
+        """获取输入法信息"""
+        try:
+            # 导入输入法检测模块
+            import sys
+            import os
+            client_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+            if client_dir not in sys.path:
+                sys.path.append(client_dir)
+            
+            from utils.input_method_detector import get_current_input_method_info
+            return get_current_input_method_info()
+        except Exception as e:
+            print(f"获取输入法信息失败: {e}")
+            return {
+                "current_im": "Unknown",
+                "language": "English",
+                "layout": "QWERTY",
+                "available_ims": ["English"],
+                "is_ime_active": False,
+                "os_name": platform.system()
             }
     
     def run(self):
@@ -203,7 +227,8 @@ class TaskWorker(QThread):
                         "text_command": self.text_command,
                         "screenshot_base64": self.screenshot_base64,
                         "user_id": "default",
-                        "os_info": self.os_info
+                        "os_info": self.os_info,
+                        "input_method_info": self.input_method_info
                     }
                 }
                 
