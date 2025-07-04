@@ -19,6 +19,8 @@ class OSInfo(BaseModel):
     machine: str
     processor: str
     platform: str
+    screen_width: Optional[int] = None  # 屏幕宽度
+    screen_height: Optional[int] = None  # 屏幕高度
     error: Optional[str] = None
 
 class InputMethodInfo(BaseModel):

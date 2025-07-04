@@ -660,7 +660,7 @@ JSON格式要求:
                 if len(response.strip()) < 10:
                     raise RuntimeError(f"Claude response too short: {len(response)} chars")
                 
-                # 检测Claude CLI界面消息（应该触发重试）
+                # 检测Claude CLI界面消息，但尝试提取JSON内容
                 cli_messages = [
                     "Welcome to Claude Code",
                     "🌟",
@@ -670,8 +670,22 @@ JSON格式要求:
                     "claude --pick-relay"
                 ]
                 
-                if any(msg in response for msg in cli_messages):
-                    raise RuntimeError(f"Claude returned CLI interface message instead of analysis: {response[:100]}")
+                contains_cli_message = any(msg in response for msg in cli_messages)
+                if contains_cli_message:
+                    logger.warning(f"Claude CLI interface detected, attempting to extract JSON content")
+                    # 尝试提取JSON部分
+                    if '{' in response and '}' in response:
+                        # 找到第一个'{'和最后一个'}'之间的内容
+                        start_idx = response.find('{')
+                        end_idx = response.rfind('}')
+                        if start_idx != -1 and end_idx != -1 and end_idx > start_idx:
+                            json_content = response[start_idx:end_idx+1]
+                            logger.info(f"Extracted JSON content from CLI response: {len(json_content)} chars")
+                            response = json_content
+                        else:
+                            raise RuntimeError(f"Could not extract JSON from CLI response: {response[:100]}")
+                    else:
+                        raise RuntimeError(f"Claude returned CLI interface message without JSON: {response[:100]}")
                 
                 # 验证响应是否包含JSON格式（基本检查）
                 if not ('{' in response and '}' in response):
@@ -703,7 +717,7 @@ JSON格式要求:
         """
         try:
             # 将图片路径包含在prompt中
-            full_prompt = f"{prompt}\n\n图片路径: {image_path}"
+            full_prompt = f"{prompt}\n\n请分析这个图片文件: {image_path}"
             
             # 构建Claude命令
             cmd = [

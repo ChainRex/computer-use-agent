@@ -135,7 +135,15 @@ async def handle_task_analysis(message: dict, websocket: WebSocket) -> dict:
         if omniparser_service and omniparser_service.is_available():
             try:
                 print("🔍 使用OmniParser分析屏幕元素...")
-                annotated_img_base64, parsed_elements = omniparser_service.parse_screen(request.screenshot_base64)
+                # 获取屏幕分辨率
+                screen_resolution = None
+                if request.os_info and request.os_info.screen_width and request.os_info.screen_height:
+                    screen_resolution = (request.os_info.screen_width, request.os_info.screen_height)
+                    print(f"📏 使用屏幕分辨率: {screen_resolution}")
+                else:
+                    print("⚠️  未获取到屏幕分辨率，使用图片尺寸")
+                
+                annotated_img_base64, parsed_elements = omniparser_service.parse_screen(request.screenshot_base64, screen_resolution)
                 
                 # 转换为标准格式
                 ui_elements = [

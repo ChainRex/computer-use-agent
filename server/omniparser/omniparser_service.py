@@ -57,12 +57,13 @@ class OmniParserService:
             logger.error(f"Failed to initialize OmniParser: {str(e)}")
             raise
     
-    def parse_screen(self, image_base64: str) -> Tuple[str, List[Dict]]:
+    def parse_screen(self, image_base64: str, screen_resolution: Optional[Tuple[int, int]] = None) -> Tuple[str, List[Dict]]:
         """
         解析屏幕截图，检测UI元素
         
         Args:
             image_base64: Base64编码的图像数据
+            screen_resolution: 实际屏幕分辨率 (width, height), 如果提供则用于坐标转换
             
         Returns:
             Tuple[str, List[Dict]]: (标注后的图像base64, 检测到的元素列表)
@@ -85,8 +86,9 @@ class OmniParserService:
             # 打印调试信息，查看原始数据结构
             logger.info(f"Raw parsed_content_list sample: {parsed_content_list[:3] if parsed_content_list else 'Empty'}")
             
-            # 格式化输出，传递图片尺寸
-            formatted_elements = self._format_parsed_content(parsed_content_list, image_size)
+            # 格式化输出，如果提供了屏幕分辨率则使用，否则使用图片尺寸
+            target_resolution = screen_resolution if screen_resolution else image_size
+            formatted_elements = self._format_parsed_content(parsed_content_list, image_size, target_resolution)
             
             logger.debug(f"Parsed {len(formatted_elements)} elements from screen")
             
@@ -96,19 +98,30 @@ class OmniParserService:
             logger.error(f"Failed to parse screen: {str(e)}")
             raise
     
-    def _format_parsed_content(self, parsed_content_list: List, image_size: Tuple[int, int] = (1280, 720)) -> List[Dict]:
+    def _format_parsed_content(self, parsed_content_list: List, image_size: Tuple[int, int] = (1280, 720), target_resolution: Optional[Tuple[int, int]] = None) -> List[Dict]:
         """
         格式化解析后的内容
         
         Args:
             parsed_content_list: OmniParser输出的原始内容列表
             image_size: 图片尺寸 (width, height)
+            target_resolution: 目标分辨率 (width, height), 如果提供则进行坐标转换
             
         Returns:
             List[Dict]: 格式化后的元素列表
         """
         formatted_elements = []
-        screen_width, screen_height = image_size
+        image_width, image_height = image_size
+        
+        # 如果提供了目标分辨率，计算缩放比例
+        if target_resolution:
+            target_width, target_height = target_resolution
+            scale_x = target_width / image_width
+            scale_y = target_height / image_height
+            logger.info(f"Coordinate scaling: image({image_width}x{image_height}) -> screen({target_width}x{target_height}), scale({scale_x:.3f}, {scale_y:.3f})")
+        else:
+            scale_x = scale_y = 1.0
+            target_width, target_height = image_width, image_height
         
         for i, content in enumerate(parsed_content_list):
             if isinstance(content, dict):
@@ -119,12 +132,12 @@ class OmniParserService:
                 
                 # 转换bbox格式 (通常是[x1, y1, x2, y2]的相对坐标)
                 if bbox and len(bbox) >= 4:
-                    # 转换为像素坐标
+                    # 首先转换为图片像素坐标，然后缩放到目标分辨率
                     coordinates = [
-                        int(bbox[0] * screen_width),  # x1
-                        int(bbox[1] * screen_height), # y1  
-                        int(bbox[2] * screen_width),  # x2
-                        int(bbox[3] * screen_height)  # y2
+                        int(bbox[0] * image_width * scale_x),   # x1
+                        int(bbox[1] * image_height * scale_y),  # y1  
+                        int(bbox[2] * image_width * scale_x),   # x2
+                        int(bbox[3] * image_height * scale_y)   # y2
                     ]
                 else:
                     coordinates = []

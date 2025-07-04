@@ -142,13 +142,19 @@ class TaskWorker(QThread):
     def _get_os_info(self):
         """获取操作系统信息"""
         try:
+            # 获取屏幕分辨率
+            import pyautogui
+            screen_width, screen_height = pyautogui.size()
+            
             return {
                 "system": platform.system(),
                 "version": platform.version(),
                 "release": platform.release(),
                 "machine": platform.machine(),
                 "processor": platform.processor(),
-                "platform": platform.platform()
+                "platform": platform.platform(),
+                "screen_width": screen_width,
+                "screen_height": screen_height
             }
         except Exception as e:
             return {
@@ -158,6 +164,8 @@ class TaskWorker(QThread):
                 "machine": "Unknown",
                 "processor": "Unknown",
                 "platform": "Unknown",
+                "screen_width": None,
+                "screen_height": None,
                 "error": str(e)
             }
     
