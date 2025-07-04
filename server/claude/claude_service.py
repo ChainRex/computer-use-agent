@@ -87,7 +87,6 @@ class ClaudeService:
         ui_elements: List[UIElement],
         annotated_screenshot_base64: Optional[str] = None,
         os_info: Optional[OSInfo] = None,
-        input_method_info: Optional[Dict] = None,
         task_id: Optional[str] = None
     ) -> Tuple[List[ActionPlan], str, float]:
         """
@@ -99,7 +98,6 @@ class ClaudeService:
             ui_elements: 检测到的UI元素列表
             annotated_screenshot_base64: 标注后的截图base64编码（可选）
             os_info: 操作系统信息
-            input_method_info: 输入法信息
             task_id: 任务ID，用于记忆管理
             
         Returns:
@@ -113,7 +111,7 @@ class ClaudeService:
             )
             
             # 构建Claude分析提示
-            prompt = self._build_analysis_prompt(text_command, ui_elements, os_info, input_method_info)
+            prompt = self._build_analysis_prompt(text_command, ui_elements, os_info)
             
             # 执行Claude命令（带重试机制）
             claude_response = self._execute_claude_command_with_retry(prompt, image_path)
@@ -334,7 +332,7 @@ class ClaudeService:
             logger.error(f"Failed to save image: {str(e)}")
             raise
     
-    def _build_analysis_prompt(self, text_command: str, ui_elements: List[UIElement], os_info: Optional[OSInfo] = None, input_method_info: Optional[Dict] = None) -> str:
+    def _build_analysis_prompt(self, text_command: str, ui_elements: List[UIElement], os_info: Optional[OSInfo] = None) -> str:
         """
         构建Claude分析提示
         
@@ -342,7 +340,6 @@ class ClaudeService:
             text_command: 用户指令
             ui_elements: UI元素列表
             os_info: 操作系统信息
-            input_method_info: 输入法信息
             
         Returns:
             str: 分析提示
@@ -366,25 +363,12 @@ class ClaudeService:
             version = getattr(os_info, 'version', '未知')
             os_text = f"{system} {version}"
         
-        # 构建输入法信息
-        input_method_text = ""
-        if input_method_info:
-            current_im = input_method_info.get('current_im', '未知')
-            language = input_method_info.get('language', '未知')
-            is_ime_active = input_method_info.get('is_ime_active', False)
-            available_ims = input_method_info.get('available_ims', [])
-            
-            input_method_text = f"\n当前输入法: {current_im}"
-            input_method_text += f"\n当前语言: {language}"
-            input_method_text += f"\nIME状态: {'激活' if is_ime_active else '未激活'}"
-            if available_ims:
-                input_method_text += f"\n可用输入法: {', '.join(available_ims)}"
         
         prompt = f"""请分析这个计算机屏幕截图和用户指令，生成详细的pyautogui操作步骤。
 
 用户指令: {text_command}
 
-操作系统: {os_text}{input_method_text}
+操作系统: {os_text}
 
 检测到的UI元素:
 {elements_text}
@@ -402,7 +386,7 @@ class ClaudeService:
         {{
             "type": "type",
             "description": "输入描述，不要使用双引号", 
-            "text": "要输入的文本"
+            "text": "English text only - translate Chinese to English"
         }},
         {{
             "type": "key",
@@ -436,15 +420,15 @@ JSON格式要求:
 - Linux系统: 使用Linux桌面环境相关的快捷键
 - 根据操作系统调整操作方式和界面元素识别策略
 
-输入法处理要求:
-- 在输入文本前，请检查当前输入法状态是否适合
-- 如果需要输入中文但当前是英文输入法，请先切换到中文输入法
-- 如果需要输入英文但当前是中文输入法，请先切换到英文输入法
-- 使用系统特定的输入法切换快捷键:
-  * Windows: Ctrl+Space 或 Win+Space 切换输入法
-  * macOS: Cmd+Space 或 Control+Space 切换输入法
-  * Linux: Ctrl+Space 或根据系统设置的快捷键
-- 切换后等待0.5秒再开始输入，确保输入法切换完成"""
+文本输入要求 (CRITICAL):
+- 所有type操作中的text字段必须使用英文，不能包含中文字符
+- 如果用户指令包含中文内容，必须将其翻译为英文后再输入
+- 例如: 用户要求输入"你好"，应该输入"hello"
+- 例如: 用户要求输入"搜索"，应该输入"search"  
+- 例如: 用户要求输入"文件"，应该输入"file"
+- 确保所有text字段只包含ASCII字符，因为pyautogui无法处理中文字符
+
+"""
 
         return prompt
     
@@ -497,7 +481,7 @@ JSON格式要求:
         {{
             "type": "type",
             "description": "输入操作描述，不要使用双引号", 
-            "text": "要输入的文本"
+            "text": "English text only - translate Chinese to English"
         }}
     ]
 }}
@@ -519,6 +503,7 @@ JSON格式要求:
 - 对于macOS系统，使用cmd键而不是ctrl键
 - 按键组合用加号连接，如"cmd+space", "cmd+tab"
 - 确保操作序列逻辑正确，能够完成指定任务
+- **CRITICAL: 所有type操作的text字段必须使用英文，不能包含中文字符，因为pyautogui无法处理中文**
 
 **JSON格式要求:**
 1. 只输出JSON，不要添加任何说明文字或markdown标记
@@ -597,7 +582,7 @@ JSON格式要求:
         {{
             "type": "type",
             "description": "输入操作描述，不要使用双引号", 
-            "text": "要输入的文本"
+            "text": "English text only - translate Chinese to English"
         }}
     ]
 }}
@@ -619,6 +604,7 @@ JSON格式要求:
 - 对于macOS系统，使用cmd键而不是ctrl键
 - 按键组合用加号连接，如"cmd+space", "cmd+tab"
 - 确保操作序列逻辑正确，能够完成指定任务
+- **CRITICAL: 所有type操作的text字段必须使用英文，不能包含中文字符，因为pyautogui无法处理中文**
 
 **JSON格式要求:**
 1. 只输出JSON，不要添加任何说明文字或markdown标记
